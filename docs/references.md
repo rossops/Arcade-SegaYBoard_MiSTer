@@ -3,8 +3,9 @@
 ## Behavioural references
 - MAME (behavioural reference, GPL-2.0+/BSD-3): local checkout `/Users/rossesposito/Code/mame`
   (`f528cd62`, mame0284-123). Files to port from: `src/mame/sega/segaybd.cpp`, `segaybd.h`,
-  `sega16sp.cpp` (Y Board sprite generator and the 16B layer), `segaic16_m.cpp` (math and
-  timer chips), `src/devices/machine/315_5296.cpp`, `src/devices/sound/segapcm.cpp`.
+  `segaybd_v.cpp` (mixer), `sega16sp.cpp` (`sega_yboard_sprite_device`, `sega_sys16b_sprite_device`),
+  `segaic16.cpp` (`rotate_draw`, `rotate_control_r`, palette), `segaic16_m.cpp` (5248/5249),
+  `315_5296.cpp`, `src/devices/machine/msm6253.cpp`, `src/devices/sound/segapcm.cpp`.
   Installed binary for captures: `/opt/homebrew/bin/mame` (0.289).
 - ROM sets: MAME 0.289 merged zips in `/Volumes/roms/Arcade/MAME 0.289 ROMs (merged)/`.
 

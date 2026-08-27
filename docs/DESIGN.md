@@ -1,11 +1,315 @@
-# Sega Y Board core — design notes
+# Sega Y Board core: design notes and plan
 
-To be written with the plan before the first milestone. Sections to fill:
+Written 2026-08-27 from MAME (`src/mame/sega/segaybd.cpp`, `segaybd_v.cpp`,
+`sega16sp.cpp`, `segaic16.cpp`, `315_5296.cpp`, `src/devices/machine/msm6253.cpp`)
+before any Y Board RTL exists. Where MAME guesses, the guess is marked as an
+open question at the end. The X Board core's `docs/DESIGN.md` is the worked
+example for everything that is shared; this document only says what is
+different and what the plan is.
 
-1. What came from the X Board core and what is new (three 68000s, the 315-5305 sprite
-   generator with the 315-5306 rotation, the 16B sprite layer, the 315-5296 I/O chip,
-   no tilemap, no road).
-2. Clocks and memory placement (BRAM / SDRAM / DDR3 budget; the X Board ended at
-   488/553 M10K, so count blocks from the first build).
-3. Per-chip references and where MAME is the authority.
-4. Milestones with pass criteria, one gate script each (`verif/board/check_mN.sh`).
+## 1. What came over from the X Board and what is new
+
+Same hardware, carried over as `yb_*` (see `references.md`): the 68000
+wrapper and ROM cache, 315-5248 multiplier and 315-5249 divider (three of
+each here), the Z80 sound board with YM2151 and 315-5218 PCM, the 315-5242
+palette, the SDRAM controller and loader, the DDR3 framebuffer interface,
+video timing, the analog response shaper.
+
+Not on this board, delete when convenient: `yb_cmptimer_5250.sv` (the Y Board
+has no 315-5250; the sound latch is a plain latch and the timer interrupt
+comes from the 315-5306), the tilemap, the road, the CXD1095, FD1094.
+
+New for the Y Board:
+
+| Piece | Chip | Notes |
+| --- | --- | --- |
+| Third 68000 | | main, sub X, sub Y, all 12.5 MHz, all share one 64 KB RAM |
+| I/O chip | 315-5296 | 8 ports A-H with a direction register, replaces the CXD1095 pair |
+| ADC | OKI MSM6253 | 4 channels, serial read one bit per access, channel 3 muxed 4 ways |
+| Back sprite layer | 315-5305 | linked-list sprites with palette indirection into a 512x512 framebuffer, "huge fill rate" |
+| Rotation and sync | 315-5306 x2 | affine scan-out of that framebuffer, per-line clip extents, the IRQ2 source |
+| Front sprite layer | 315-5196 | System 16B sprites (line based, 16-bit ROM words), same chip as System 16B |
+| Mixer | 315-5312 | Y layer under 16B layer with per-pixel priority compare and pen-14 shadow |
+
+Games (MAME 0.289 sets, parents): Galaxy Force II `gforce2` (1988), Power
+Drift `pdrift` (1988), G-LOC Air Battle `gloc` (1990), Rail Chase `rchase`
+(1991), Strike Fighter `strkfgtr` (1991). Clones add `gforce2sd`, `gforce2j`,
+`gforce2ja`, `glocj`, `glocu`, `glocr360`, `glocr360j`, `pdrifta`, `pdrifte`,
+`pdriftj`, `pdriftjb`, `pdriftl` (link board), `rchasej`, `rchasejb`,
+`strkfgtrj`. None use an FD1094. The deluxe motor boards and the Power Drift
+link board are separate Z80 systems: stub them the way the X Board stubbed the
+After Burner motor board.
+
+## 2. Hardware reference
+
+### Clocks
+50 MHz master: 68000 x3 at 12.5 MHz (/4), 315-5296 at 6.25 MHz (/8). MAME
+runs the sound board from a 32.2159 MHz crystal (/8 = 4.027 MHz for the Z80,
+YM2151 and 315-5218); the Power Drift PCB notes on the same file say 16 MHz /
+4 = 4.000 MHz. Open question 3. Either way it is the same modulo-25 enable
+scheme as the X Board, one clock domain.
+
+MAME's screen is 342x262 at 60 Hz "to be verified", 320x224 visible. The
+X Board's encoder at 6.25 MHz gives 400x262 at 59.64 Hz; assume the same
+here (open question 1) and keep `yb_video_timing` as it is.
+
+### Memory maps (MAME; each CPU masks to 24 bits)
+
+Main 68000:
+
+| Range | What |
+| --- | --- |
+| 000000-07FFFF | program ROM (512 KB slot, gforce2 uses 256 KB) |
+| 080000-080007 (mirror 1FF8) | 315-5248 multiplier (main) |
+| 082001 (mirror 1FFE) | sound latch, byte, raises Z80 NMI |
+| 084000-08401F (mirror 1FE0) | 315-5249 divider (main) |
+| 0C0000-0CFFFF | shared RAM, 64 KB, all three CPUs |
+| 100000-10001F | 315-5296, low byte of each word |
+| 100040-100047 | MSM6253: write selects channel (A1:A0), read shifts one bit out on D7 |
+| 1F0000-1FFFFF | local RAM 64 KB |
+| 190000-192001 | link board (pdriftl only): MB8421 dual-port RAM, link status |
+
+Sub X:
+
+| Range | What |
+| --- | --- |
+| 000000-03FFFF | program ROM (256 KB) |
+| 080000 / 084000 | its own 5248 / 5249 |
+| 0C0000-0CFFFF | shared RAM |
+| 180000-18FFFF | Y sprite RAM, 64 KB (4096 entries of 8 words, plus indirection tables in the same space) |
+| 1F8000-1FBFFF | local RAM 16 KB |
+| 1FC000-1FFFFF | backup RAM 16 KB (battery, NVRAM index 3 as on the X Board) |
+
+Sub Y:
+
+| Range | What |
+| --- | --- |
+| 000000-03FFFF | program ROM (256 KB) |
+| 080000 / 084000 | its own 5248 / 5249 |
+| 0C0000-0CFFFF | shared RAM |
+| 180000-1807FF (mirror 7800) | rotation RAM, 2 KB |
+| 188000-188FFF (mirror 7000) | 16B sprite RAM, 4 KB |
+| 190000-193FFF (mirror 4000) | palette RAM, 8192 x 16 |
+| 198000-19FFFF | rotation control: a read swaps the two halves of rotation RAM, returns FFFF |
+| 1F0000-1FFFFF | local RAM 64 KB |
+
+Z80: ROM 0000-EFFF, 315-5218 registers F000-F0FF (mirror 0700), RAM
+F800-FFFF; ports 00-01 YM2151 (mirror 3E), 40 sound latch read (mirror 3F).
+NMI from the latch write, INT from the YM2151. Identical to the X Board sound
+board except the PCM banking: MAME configures `BANK_12M | BANK_MASKF8`
+(bank shift 12, mask 0xF8) where the X Board used mask 0x70. Make
+`yb_segapcm_5218`'s mask a parameter.
+
+### Interrupts
+All three 68000s see the same three lines, no acknowledge on any of them:
+IPL2 = "timer" from the 315-5306, one scanline wide; IPL4 = vblank, asserted
+at line 223, cleared at 224; IPL6 when both are up. MAME fires IPL2 at
+scanline 170 and calls the value a trial-and-error hard-coded constant (open
+question 2). There is no 315-5250, so the interrupt generator is a small block
+in `yb_core` driven by the video counter.
+
+The main CPU resets the others through 315-5296 port E: bit 3 XRES, bit 2
+YRES (1 = held in reset), bit 4 /SRES for the Z80 (0 = reset). Also on port
+E: bit 7 /KILL is the display enable, bit 6 CONT, bit 5 /WDCL kicks the MB3773
+watchdog, bits 1:0 pick the ADC channel-3 mux. Port H: bit 7 /MUTE, bits 6:0
+audio filter select (ignore). Port D is game outputs (lamps, motors). Inputs:
+port A = P1, port B = general (service, test, start, buttons, coins), port C =
+limit switches (deluxe cabinets; tie inactive), port F = DSW B, port G = DSW A
+(coinage).
+
+### 315-5296
+64 byte-wide registers: 0-7 ports A-H, 8-B read 'S','E','G','A', C/E the CNT
+register, D/F the direction register (bit n = port n is an output). A read of
+an output port returns its latch; a write to an input port only updates the
+latch. Reset: all inputs, latches 0. Unused registers read FF (on real
+System 16 hardware, the prefetch value). CNT0-2 output pins unused here.
+
+### MSM6253
+Four 8-bit channels. Write to 100040+2n latches the conversion of channel n
+into a shift register; each read of 100041 returns the MSB on D7 and shifts
+left (zero in). Games read eight times per sample. Channel 3 goes through a
+74HC4052 selected by port E bits 1:0, so `ADC.3`..`ADC.6` in MAME's port
+names are the four mux inputs. Channel use per game (MAME):
+gforce2 0 stick X, 1 stick Y (reversed), 2 throttle; gloc/strkfgtr 3 stick Y
+(0x40-0xC0, reversed), 4 throttle, 5 stick X (0x20-0xE0), glocr360 also 0/2
+motion pitch/roll; pdrift 3 brake, 4 gas, 5 steering (0x20-0xE0);
+rchase 0/1 P1 gun X/Y, 2/3 P2 gun X/Y. The X Board's `ana_mode` descriptor
+byte and `yb_ana_shape` cover the ranges; Line of Fire's gun modes cover
+Rail Chase.
+
+### 315-5305 Y sprites (back layer)
+Sprite RAM entry, 8 words (from `sega_yboard_sprite_device::draw`):
+
+| Word | Bits | Field |
+| --- | --- | --- |
+| 0 | 15 | end of list |
+| 0 | 14, 12 | hide |
+| 0 | 10:0 | indirection table address (/16 words) inside sprite RAM |
+| 1 | 15:12 | bank bits 7:4, 11:0 X (0x600 = screen 0) |
+| 2 | 15:12 | bank bits 3:0, 11:0 Y (0x600 = screen 0) |
+| 3 | 15:0 | ROM offset within bank (64-bit words) |
+| 4 | 15:0 | height |
+| 5 | 14 | draw top-to-bottom (else bottom-to-top), 13 flip (inverted sense), 12 left-to-right (else right-to-left), 10:0 zoom |
+| 6 | 14:12 colour, 11:8 priority, 7:0 | signed pitch (words per row) |
+| 7 | 11:0 | index of the next entry (linked list; a visited entry ends the walk) |
+
+Only 5 bank bits are used (`bank = ((w1 >> 8) & 0x10) | (w2 >> 12)`); a bank
+is 0x10000 64-bit words = 512 KB. ROM words hold 16 4-bit pens, MSB first
+(reversed when flipped); pen 0xF at the end of a word ends the row. Each pen
+goes through the 16-entry indirection table: `ind = table[pen]`, written only
+if `ind < 0x1FE` (0x1FE/0x1FF transparent). Zoom: `xacc += zoom` per output
+pixel, a source pixel repeats while `xacc < 0x200` (so 0x200 = 1:1, smaller
+magnifies, MAME clamps 0 to 1); vertically `yacc += zoom; addr += pitch *
+(yacc >> 9); yacc &= 0x1FF`. Framebuffer pixel = `(w6 << 1) & 0xFE00 | ind`:
+colour 15:13, priority 12:9, indirected colour 8:0. Rows are clipped to the
+per-scanline-pair extents in rotation RAM: word `2n` = min X for lines 2n and
+2n+1, word `2n+1` = max X; bit 15 of min = "above the top", bit 14 = "below
+the bottom", either one skips the line and ends the sprite in that direction.
+Framebuffer is 512x512; the PCB has 32 x 32 KB SRAM = 1 MB, i.e. two of
+them, so it is double buffered like the X Board's (open question 4 for the
+swap/erase cadence). MAME fills the whole buffer with FFFF before drawing.
+
+### 315-5306 rotation scan-out
+Rotation RAM (2 KB, double buffered by the read of 198000): words 0-0x3EF
+are the clip extents above; words 0x3F0-0x3FB are six 32-bit big-endian
+values: `currx`, `curry`, `dyy`, `dxx`, `dxy`, `dyx` in 18.14 fixed point.
+Per frame `currx += dxx * (x0 + 27) + dxy * y0`, then per pixel `tx += dxx;
+ty += dyx`, per line `currx += dxy; curry += dyy`; source pixel at
+`((ty >> 14) & 0x1FF, (tx >> 14) & 0x1FF)`. A written pixel becomes palette
+index `(pix & 0x1FF) | ((pix >> 6) & 0x200) | ((pix >> 3) & 0xC00) | 0x1000`
+with priority byte `(pix >> 8) | 1`; an unwritten one (FFFF) becomes palette
+index `sy` (the source row number: the "scanline colour", used for sky and
+ground gradients) with priority FF. The 27 is MAME's; open question 5.
+
+### 315-5196 16B sprites (front layer)
+System 16B format, 8 words per entry, 128 entries in 4 KB:
+w0 bottom-1 (15:8), top-1 (7:0); w1 X 8:0 (0xBD = screen 0; MAME's origin is
+184 for this device), 12:9 sprite-vs-sprite priority (Y Board use); w2 bit 15
+end, 14 hide, 8 flip, 7:0 signed pitch; w3 ROM offset (16-bit words); w4
+11:8 bank, 7:6 priority, 5:0 colour; w5 vzoom 9:5, hzoom 4:0 (0 = full size,
+0x10 = half); w7 is scratch the chip writes back. Four 4-bit pens per word,
+pen 0 transparent, pen 0xF ends the row; horizontal zoom accumulator starts
+at `4 * hzoom` and a pixel is drawn when `(xacc & 0x3F) + hzoom < 0x40`;
+vertical: `w5 += vzoom << 10`, carry into bit 15 skips a source row. Banks
+are 0x10000 words (128 KB), identity bank table (no 315-5195 mapper here).
+Output pixel: bits 15:12 the 16B priority nibble, 11:10 priority, 9:4 colour,
+3:0 pen. The real chip is line based (two line buffers); render per scanline
+into a line buffer rather than a frame buffer. jotego's `jts16` (GPL-3) has a
+315-5196 implementation that could be vendored instead of writing one.
+
+### 315-5312 mixer (from `segaybd_state::screen_update`)
+Base is the rotated Y layer. A 16B pixel (not FFFF) with
+`((pix >> 11) & 0x1E) < (pri & 0x1F)` wins; if its pen is 0xE it shadows
+(palette index + 8192, the 315-5242 shadow bank) otherwise it draws
+`0x800 | (pix & 0x7FF)`. Display off (port E bit 7 low) = black.
+
+### 315-5242 palette
+8192 x 16, `sBGR BBBB GGGG RRRR` with the LSB of each component in bits
+14:12, bit 15 selecting hilight vs shadow for the effects copy. Same as the
+X Board: keep `yb_palette_5242` and its LUTs.
+
+### ROM sets and sizes
+| Region | gforce2 | pdrift | gloc | rchase | strkfgtr |
+| --- | --- | --- | --- | --- | --- |
+| main (LOAD16_BYTE pairs) | 256 KB | 256 KB | 256 KB | 256 KB | 256 KB |
+| subx / suby | 128 / 128 KB | 128 / 128 | 256 / 256 | 256 / 256 | 256 / 256 |
+| bsprites (LOAD16_BYTE, 16-bit words) | 512 KB | 512 KB | 2 MB | 512 KB | 2 MB |
+| ysprites (LOAD64_BYTE, 8-way interleave) | 4 MB | 4 MB | 16 MB | 12 MB | 16 MB |
+| Z80 | 64 KB | 64 KB | 64 KB | 64 KB | 64 KB |
+| PCM (2 MB region, ERASEFF, RELOAD mirrors) | 640 KB | | | | |
+
+The `ysprites` region is eight ROMs interleaved into 64-bit words
+(`<interleave output="64">` in the MRA, eight `map` digits). `pack_roms.py`
+needs a `x64` loader next to `w16`/`x32`. Power Drift's `user1` region and
+the motor/link/driver-board ROMs are not loaded.
+
+## 3. Architecture
+
+### Clocks
+As the X Board: one PLL, `clk_sys` 50 MHz (= PCB master, so /4 and /8 are
+exact), `clk_ram` 100 MHz, SDRAM clock at 180 degrees. Sound 4 MHz from the
+modulo-25 enable.
+
+### Memory placement
+SDRAM (32 MB module; G-LOC and Strike Fighter need 21 MB of ROM):
+
+| Offset | Slot | Contents |
+| --- | --- | --- |
+| 0x0000000 | 512 KB | main ROM |
+| 0x0080000 | 256 KB | sub X ROM |
+| 0x00C0000 | 256 KB | sub Y ROM |
+| 0x0100000 | 64 KB | Z80 ROM |
+| 0x0200000 | 2 MB | PCM |
+| 0x0400000 | 2 MB | 16B sprite ROM |
+| 0x0600000 | 16 MB | Y sprite ROM (64-bit words as four 16-bit halves) |
+
+Ports: three 68000 ROM caches, Z80 cache, PCM, 16B line fetch, Y sprite
+stream. Reuse `sdram.sv`'s p0..p7 and the X Board's priority scheme (CPUs
+first, then sound, then video with deadline escalation).
+
+BRAM: shared 64 KB, main local 64 KB, sub X local 16 KB + backup 16 KB, sub Y
+local 64 KB, Y sprite RAM 64 KB, 16B sprite RAM 4 KB, rotation RAM 2 x 2 KB,
+palette 16 KB, Z80 RAM 2 KB. About 320 KB = 2.6 Mbit, roughly 330 M10K
+blocks before caches and line buffers; the framework takes about 40. Count
+blocks from the first fit. If it does not close, the 64 KB local RAMs are the
+candidates for SDRAM behind the ROM cache (they are not, on the X Board
+evidence, the fast path).
+
+Shared RAM: three masters on one 64 KB RAM. On the FPGA use one true dual
+port BRAM and time-slice it at `clk_ram` (a 68000 bus cycle is at least 32
+`clk_ram` clocks, so three requesters never contend for long); insert DTACK
+wait states only if a slot is missed. What the PALs 315-5314..5318 do on the
+real board is open question 6; the X Board's bus-grant model does not apply
+because no CPU owns another's space here.
+
+DDR3: two 512x512x16 Y framebuffers at 0x30000000 and 0x30080000. Rendering
+writes runs (reuse `yb_fb_if`'s run writer, 512-pixel rows). Scan-out is the
+new part: the rotation reads one pixel per output pixel from an arbitrary
+address. Do it one line ahead into a line buffer at `clk_ram`, through a
+small cache of 64-bit words (four pixels) with the next word prefetched;
+consecutive samples along an output line move by about one source pixel, so
+misses run at roughly a quarter of the pixel rate: about 100-200 DDR3
+single reads per 64 us line, well inside the budget the X Board measured.
+Tile the framebuffer in DDR3 (8x8 pixel blocks per 128-byte burst) if a
+straight row layout misses too often on steep rotations. This is risk 1;
+measure it in M3 before anything else is built on it.
+
+### Modules
+| File | Role |
+| --- | --- |
+| `rtl/yb_pkg.sv` | rewrite: constants, SDRAM/DDR3 map, stream layout, descriptor |
+| `rtl/yb_core.sv` | board top: three `yb_m68k_bus` + caches, shared RAM arbiter, IRQ generator, resets from port E |
+| `rtl/io/yb_315_5296.sv` | the I/O chip |
+| `rtl/io/yb_msm6253.sv` | ADC with the serial read and the port-E mux |
+| `rtl/video/yb_ysprite_5305.sv` | list walker (linked list, visited set), indirection, zoom, run writer to DDR3 |
+| `rtl/video/yb_rotate_5306.sv` | rotation RAM (double buffer, swap on 198000 read), affine scan-out with cache, clip extents, IRQ2 line |
+| `rtl/video/yb_bsprite_5196.sv` | 16B line renderer with two line buffers (or vendored `jts16` object unit) |
+| `rtl/video/yb_mixer_5312.sv` | priority compare, shadow, display enable |
+| `verif/models/ysprite5305.py`, `rotate5306.py`, `bsprite5196.py`, `mixer5312.py`, `io5296.py`, `msm6253.py` | golden models, ported line for line from MAME |
+
+## 4. Milestones
+
+Each row has a gate script `verif/board/check_mN.sh` that must pass before
+the next starts. Sim on the Mac, Quartus on the Windows box, hardware test
+by the user before any rbf is committed.
+
+| M | Scope | Pass criterion |
+| --- | --- | --- |
+| M0 | Trim the scaffold: `yb_pkg`, `Arcade-SegaYBoard.sv` down to a `yb_core` stub, `romsets.py` with `gforce2`, `x64` loader, descriptor, MRA | `sh verif/lint.sh` and `lint_emu.sh` clean; `tools/tests` pass with the gforce2 zip; Quartus compile of the stub fits and STA is clean |
+| M1 | Three 68000s with caches, shared and local RAMs, backup RAM, 5248/5249 x3, 315-5296, MSM6253, IRQ generator, watchdog, sound latch, Z80 stub | cocotb: 5296 and 6253 exact vs models; PC traces of all three CPUs match MAME (`tools/mame_trace.py`) for 500k instructions; IRQ2/4 entries on the same frame and line +-1 |
+| M2 | Y sprites into DDR3 with identity scan-out, palette, indirection | `ysprite5305.py` exact on 20 dumped lists incl. zoom, flips, both draw directions, list loops; board frame exact in the Y layer vs the model rendered from the RTL's own RAM dump |
+| M3 | Rotation scan-out, rotation RAM swap, scanline colour, cache | `rotate5306.py` exact on dumped rotation RAM for attract-mode frames; DDR3 miss count per line logged from the bench under the budget for the steepest attract rotation |
+| M4 | 16B sprites and the mixer | `bsprite5196.py` exact on dumped lists; full frames pixel-exact vs MAME captures at f60/f150/f300 |
+| M5 | Sound wired (PCM mask F8, latch NMI, port H mute) | PCM exact vs `segapcm.py`; attract-mode WAV envelope correlation > 0.95 as on the X Board |
+| M6 | Hardware bring-up and timing closure, NVRAM, DIPs, controls, OSD | zero negative slack in the fit corner; 30 min attract without a watchdog reset; HDMI capture matches sim |
+| M7 | Power Drift (gear shift, motor stub), G-LOC, Strike Fighter (16 MB ROM slot), Rail Chase (gun modes from Line of Fire), R360 | each boots, passes its memory test, plays; MRAs and alternatives regenerated, `db.json.zip`, release |
+
+## 5. Open questions (MAME is the default answer until hardware says otherwise)
+1. Horizontal total and pixel clock: MAME 342 columns "to be verified" vs the X Board's 400 at 6.25 MHz. Assume 400.
+2. IRQ2 scanline: MAME's 170 is a tuned constant; the real source is the 315-5306. Keep it a descriptor field so it can be tuned per game without a rebuild.
+3. Sound crystal: 32.2159 MHz / 8 (MAME) or 16 MHz / 4 (PCB notes). Pitch differs by 0.7%; go with the PCB notes' 4.000 MHz unless a recording says otherwise.
+4. Y framebuffer cadence: when the render starts, when buffers swap, and whether the erase is a full FFFF fill or only inside the clip extents (MAME clears only lines whose extents are not flagged, then fills the whole bitmap anyway). Decide in M2 from what the games write.
+5. The `+27` X offset in the rotation and the 16B origin of 184: MAME calibrations, check against captures.
+6. Shared RAM arbitration between three CPUs (PALs 315-5314..5318): wait-state behaviour unknown; time-slicing is the model.
+7. Zoom clamp on Y sprites ("maximum of 8x, not 100% confirmed").
+8. MSM6253 timing: conversion time and whether the shift register reload is on the write only.

@@ -19,11 +19,10 @@ convention below, and its git history shows what each decision cost.
   handful that are listed in a comment at the top of the file.
 
 ## How the work goes
-- Plan first, as a milestone table with a pass criterion per row, one gate
-  script per milestone (`verif/board/check_mN.sh`). The X Board plan
-  (M0 skeleton, M1 CPUs and buses with a PC-trace gate against MAME, M2..M4 one
-  video chip each with pixel-exact golden models, M5 sound, M6 hardware and
-  timing, M7+ more games) worked; reuse its shape.
+- The plan is `docs/DESIGN.md`: hardware reference from MAME, memory
+  placement, module list, milestones M0..M7 with a pass criterion and a gate
+  script each (`verif/board/check_mN.sh`), and the open questions. Start at
+  M0. Update the README status table as milestones close.
 - Every custom chip gets a Python golden model ported from MAME, a cocotb unit
   test, and a place in the Verilator board bench that dumps frames to diff
   against MAME captures (`tools/mame_capture.py`, `tools/frame_diff.py`).

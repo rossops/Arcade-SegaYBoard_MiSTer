@@ -5,10 +5,24 @@ G-LOC, Rail Chase, Strike Fighter). Same approach as the X Board core: simulate
 the board, verify every custom chip against a Python port of MAME, then check
 whole frames against MAME captures before anything goes near the FPGA.
 
-Status: scaffold. The reusable half of the X Board core is in place (CPUs, ROM
-caches, math and timer chips, sound board, SDRAM and DDR3 interfaces, palette,
-timing, tooling, CI). No Y Board specific hardware yet; see `docs/DESIGN.md`
-for the plan and `docs/references.md` for where every file came from.
+## Status
+
+The reusable half of the X Board core is in place (CPUs, ROM caches, math
+chips, sound board, SDRAM and DDR3 interfaces, palette, timing, tooling, CI).
+No Y Board specific hardware yet. `docs/DESIGN.md` has the hardware
+reference, the architecture and the open questions; `docs/references.md`
+says where every file came from.
+
+| M | Scope | Status |
+| --- | --- | --- |
+| M0 | Trim the scaffold to a `yb_core` stub, gforce2 ROM table and MRA, first Quartus fit | |
+| M1 | Three 68000s, shared RAM, math chips, 315-5296, MSM6253, interrupts | |
+| M2 | 315-5305 Y sprites into DDR3, palette, indirection | |
+| M3 | 315-5306 rotation scan-out | |
+| M4 | 315-5196 16B sprites and the 315-5312 mixer | |
+| M5 | Sound | |
+| M6 | Hardware bring-up, timing, NVRAM, DIPs, controls | |
+| M7 | Power Drift, G-LOC, Strike Fighter, Rail Chase, R360 | |
 
 ## Building and testing
 
