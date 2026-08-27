@@ -15,9 +15,10 @@ each here), the Z80 sound board with YM2151 and 315-5218 PCM, the 315-5242
 palette, the SDRAM controller and loader, the DDR3 framebuffer interface,
 video timing, the analog response shaper.
 
-Not on this board, delete when convenient: `yb_cmptimer_5250.sv` (the Y Board
-has no 315-5250; the sound latch is a plain latch and the timer interrupt
-comes from the 315-5306), the tilemap, the road, the CXD1095, FD1094.
+Not on this board: the 315-5250 (the Y Board's sound latch is a plain latch
+and the timer interrupt comes from the 315-5306; `yb_cmptimer_5250.sv` was
+deleted in M0), the tilemap, the road, the CXD1095 and the FD1094, none of
+which came over from the X Board.
 
 New for the Y Board:
 
@@ -38,7 +39,11 @@ Drift `pdrift` (1988), G-LOC Air Battle `gloc` (1990), Rail Chase `rchase`
 `pdriftj`, `pdriftjb`, `pdriftl` (link board), `rchasej`, `rchasejb`,
 `strkfgtrj`. None use an FD1094. The deluxe motor boards and the Power Drift
 link board are separate Z80 systems: stub them the way the X Board stubbed the
-After Burner motor board.
+After Burner motor board. MAME only maps the motor board's Z80 (16 MHz / 2,
+ROM 0000-7FFF, RAM 8000-FFFF, no port map, `segaybd.cpp:877-882`) and never
+runs its protocol, so the stub is what the main CPU sees: port C limit
+switches inactive and the pitch/roll ADC inputs centred at 0x80, MAME's
+`read_safe` default. Open question 9.
 
 ## 2. Hardware reference
 
@@ -49,9 +54,11 @@ YM2151 and 315-5218); the Power Drift PCB notes on the same file say 16 MHz /
 4 = 4.000 MHz. Open question 3. Either way it is the same modulo-25 enable
 scheme as the X Board, one clock domain.
 
-MAME's screen is 342x262 at 60 Hz "to be verified", 320x224 visible. The
-X Board's encoder at 6.25 MHz gives 400x262 at 59.64 Hz; assume the same
-here (open question 1) and keep `yb_video_timing` as it is.
+MAME's screen is `set_size(342, 262)` at `set_refresh_hz(60)` with a "to be
+verified" comment and 320x224 visible (`segaybd.cpp:1474-1478`). There is no
+`set_raw`, so the 342 is a placeholder rather than a measured horizontal
+total. The X Board's encoder at 6.25 MHz gives 400x262 at 59.64 Hz; assume
+the same here (open question 1) and keep `yb_video_timing` as it is.
 
 ### Memory maps (MAME; each CPU masks to 24 bits)
 
@@ -67,7 +74,8 @@ Main 68000:
 | 100000-10001F | 315-5296, low byte of each word |
 | 100040-100047 | MSM6253: write selects channel (A1:A0), read shifts one bit out on D7 |
 | 1F0000-1FFFFF | local RAM 64 KB |
-| 190000-192001 | link board (pdriftl only): MB8421 dual-port RAM, link status |
+| 190000-190FFF | link board (pdriftl only): MB8421 dual-port RAM, left bank |
+| 191000 / 192000 | link board: `link_r` status, `link2_r/w` control (`segaybd.cpp:843-874`) |
 
 Sub X:
 
@@ -96,17 +104,27 @@ Sub Y:
 Z80: ROM 0000-EFFF, 315-5218 registers F000-F0FF (mirror 0700), RAM
 F800-FFFF; ports 00-01 YM2151 (mirror 3E), 40 sound latch read (mirror 3F).
 NMI from the latch write, INT from the YM2151. Identical to the X Board sound
-board except the PCM banking: MAME configures `BANK_12M | BANK_MASKF8`
-(bank shift 12, mask 0xF8) where the X Board used mask 0x70. Make
-`yb_segapcm_5218`'s mask a parameter.
+board except the PCM banking. MAME configures `BANK_12M | BANK_MASKF8`
+(`segaybd.cpp:1500`); `segapcm.h:25-33` makes that bank shift 13 and bank
+mask 0xF8, and `segapcm.cpp:106` forms `offset = (reg86 & mask) << shift`.
+So the bank field is register 0x86 bits 7:3 in 64 KB units and it reaches
+the whole 2 MB region. The X Board was `BANK_512`: shift 12, mask 0x70, bits
+6:4. The carried-over `yb_segapcm_5218` hard-codes the X Board case (a 7-bit
+`bank` and `{bank, 12'd0}` in the address), so in M5 the shift and the bank
+width become parameters (8-bit bank, `<< 13`) and the mask comes from the
+descriptor as it does now.
 
 ### Interrupts
 All three 68000s see the same three lines, no acknowledge on any of them:
 IPL2 = "timer" from the 315-5306, one scanline wide; IPL4 = vblank, asserted
 at line 223, cleared at 224; IPL6 when both are up. MAME fires IPL2 at
-scanline 170 and calls the value a trial-and-error hard-coded constant (open
-question 2). There is no 315-5250, so the interrupt generator is a small block
-in `yb_core` driven by the video counter.
+scanline 170, set in `machine_reset` (`segaybd.cpp:325`), and calls the value
+a trial-and-error constant (open question 2). The same file keeps a debug
+hotkey block (lines 408-416: Q, W, E, R move the line by 10 or 1 and pop the
+new value), which is a cheap way to find each game's best line against
+captures before hardware is involved. There is no 315-5250, so the interrupt
+generator is a small block in `yb_core` driven by the video counter, and the
+line number is descriptor byte 7.
 
 The main CPU resets the others through 315-5296 port E: bit 3 XRES, bit 2
 YRES (1 = held in reset), bit 4 /SRES for the Z80 (0 = reset). Also on port
@@ -122,12 +140,21 @@ limit switches (deluxe cabinets; tie inactive), port F = DSW B, port G = DSW A
 register, D/F the direction register (bit n = port n is an output). A read of
 an output port returns its latch; a write to an input port only updates the
 latch. Reset: all inputs, latches 0. Unused registers read FF (on real
-System 16 hardware, the prefetch value). CNT0-2 output pins unused here.
+System 16 hardware, the prefetch value). Registers 10-1F do nothing;
+registers 20-3F assert the chip's /FMCS peripheral select, and on this board
+/FMCS and CKOT go to the MSM6253's CS and OSC IN (`segaybd.cpp:1458`), which
+is why the ADC sits at 100040-100047: that is 5296 register 20-23. CKOT is
+the 6.25 MHz clock divided by 2, 4, 8 or 16 from CNT bits 7:6 (MAME's CNT
+emulation is a TODO, `315_5296.cpp:22`). CNT0-2 output pins unused here.
 
 ### MSM6253
-Four 8-bit channels. Write to 100040+2n latches the conversion of channel n
-into a shift register; each read of 100041 returns the MSB on D7 and shifts
-left (zero in). Games read eight times per sample. Channel 3 goes through a
+Four 8-bit channels behind the 315-5296's /FMCS window. A write to 100040+2n
+selects channel n from A2:A1 and loads its conversion into the shift
+register (`msm6253.cpp:81-85`); each read of the odd byte returns the MSB on
+D7 and shifts left with zero fill (`d7_r`, lines 128-132). MAME treats the
+conversion as instant; the real chip converts at the CKOT rate, so the delay
+between the write and the first valid read is open question 8. Games read
+eight times per sample. Channel 3 goes through a
 74HC4052 selected by port E bits 1:0, so `ADC.3`..`ADC.6` in MAME's port
 names are the four mux inputs. Channel use per game (MAME):
 gforce2 0 stick X, 1 stick Y (reversed), 2 throttle; gloc/strkfgtr 3 stick Y
@@ -190,8 +217,11 @@ end, 14 hide, 8 flip, 7:0 signed pitch; w3 ROM offset (16-bit words); w4
 0x10 = half); w7 is scratch the chip writes back. Four 4-bit pens per word,
 pen 0 transparent, pen 0xF ends the row; horizontal zoom accumulator starts
 at `4 * hzoom` and a pixel is drawn when `(xacc & 0x3F) + hzoom < 0x40`;
-vertical: `w5 += vzoom << 10`, carry into bit 15 skips a source row. Banks
-are 0x10000 words (128 KB), identity bank table (no 315-5195 mapper here).
+vertical: `w5 += vzoom << 10`, carry into bit 15 skips a source row. MAME
+clamps both zooms to a minimum of 0x40 ("maximum of 8x, not 100% confirmed",
+`sega16sp.cpp:1137` inside `sega_sys16b_sprite_device::draw`); this is the
+same clamp the X Board has as a parameter, open question 7. Banks are
+0x10000 words (128 KB), identity bank table (no 315-5195 mapper here).
 Output pixel: bits 15:12 the 16B priority nibble, 11:10 priority, 9:4 colour,
 3:0 pen. The real chip is line based (two line buffers); render per scanline
 into a line buffer rather than a frame buffer. jotego's `jts16` (GPL-3) has a
@@ -216,7 +246,15 @@ X Board: keep `yb_palette_5242` and its LUTs.
 | bsprites (LOAD16_BYTE, 16-bit words) | 512 KB | 512 KB | 2 MB | 512 KB | 2 MB |
 | ysprites (LOAD64_BYTE, 8-way interleave) | 4 MB | 4 MB | 16 MB | 12 MB | 16 MB |
 | Z80 | 64 KB | 64 KB | 64 KB | 64 KB | 64 KB |
-| PCM (2 MB region, ERASEFF, RELOAD mirrors) | 640 KB | | | | |
+| PCM (2 MB region, ERASEFF) | 768 KB, mirrored to 1.5 MB | 768 KB, same | 1.5 MB flat | 1.5 MB flat | 1.5 MB flat |
+
+The PCM row: gforce2 and pdrift load one 512 KB ROM at 0 and two 128 KB
+ROMs at 0x80000 and 0x100000, each of the small ones `ROM_RELOAD`ed three
+more times so it fills a 512 KB bank and the region is populated up to
+0x180000 (`segaybd.cpp:1620-1630`). With the
+bank mask F8 the sample table can point into any of those mirrors, so the
+stream carries them (a `repeat` count per file, section 3). The other three
+games load three 512 KB ROMs back to back with no reloads.
 
 The `ysprites` region is eight ROMs interleaved into 64-bit words
 (`<interleave output="64">` in the MRA, eight `map` digits). `pack_roms.py`
@@ -239,9 +277,9 @@ SDRAM (32 MB module; G-LOC and Strike Fighter need 21 MB of ROM):
 | 0x0080000 | 256 KB | sub X ROM |
 | 0x00C0000 | 256 KB | sub Y ROM |
 | 0x0100000 | 64 KB | Z80 ROM |
-| 0x0200000 | 2 MB | PCM |
-| 0x0400000 | 2 MB | 16B sprite ROM |
-| 0x0600000 | 16 MB | Y sprite ROM (64-bit words as four 16-bit halves) |
+| 0x0110000 | 2 MB | PCM |
+| 0x0310000 | 2 MB | 16B sprite ROM |
+| 0x0510000 | 16 MB | Y sprite ROM (64-bit words as four 16-bit halves), ends at 0x1510000 |
 
 Ports: three 68000 ROM caches, Z80 cache, PCM, 16B line fetch, Y sprite
 stream. Reuse `sdram.sv`'s p0..p7 and the X Board's priority scheme (CPUs
@@ -287,6 +325,88 @@ measure it in M3 before anything else is built on it.
 | `rtl/video/yb_mixer_5312.sv` | priority compare, shadow, display enable |
 | `verif/models/ysprite5305.py`, `rotate5306.py`, `bsprite5196.py`, `mixer5312.py`, `io5296.py`, `msm6253.py` | golden models, ported line for line from MAME |
 
+### ROM stream and descriptor
+`tools/pack_roms.py` and `tools/gen_mra.py` share `tools/romsets.py`, as on
+the X Board. The index-0 stream is the 64-byte descriptor followed by every
+region padded to its slot, in the order the SDRAM table above uses:
+
+| Region | Slot | Loader | Stream offset (after the descriptor) |
+| --- | --- | --- | --- |
+| `main` | 512 KB | `w16` | 0x000000 |
+| `subx` | 256 KB | `w16` | 0x080000 |
+| `suby` | 256 KB | `w16` | 0x0C0000 |
+| `z80` | 64 KB | `flat` | 0x100000 |
+| `pcm` | 2 MB | `flat`, FF fill | 0x110000 |
+| `bsprite` | 2 MB | `w16` | 0x310000 |
+| `ysprite` | 16 MB | `x64` | 0x510000 |
+
+The offsets equal the SDRAM offsets and the slots are contiguous, so the
+loader is a straight copy as on the X Board. `w16` and `flat` are the X
+Board loaders. `x64` is new: groups of eight `LOAD64_BYTE` ROMs, MAME
+`REGION64_BE`, one `<interleave output="64">` per group with eight `map`
+digits, and the 64-bit word lands in SDRAM as four 16-bit halves in the
+order `yb_ysprite_5305` reads them. Mirrored PCM ROMs get a fourth element
+in the file tuple, a repeat count: `("epr-11516.106", 0x20000, "19d0e17f",
+4)`. `build_region` repeats the bytes and `region_parts` emits the same
+`<part>` that many times (the MRA format is happy with a file listed more
+than once; `repeat=` on a literal part is already how the padding is
+written). `ysprite` is always the last populated region, and today both
+tools pad the last region to its slot, which would make every set a 21 MB
+stream. M0 changes that rule: the trailing region ships unpadded, so
+gforce2's stream is 9 MB and gloc's 21 MB. Either way the MRA load is
+visibly longer than the X Board's 4.4 MB. Live with it.
+
+The descriptor (`board_desc_t` in `yb_pkg.sv`, `descriptor()` in
+`pack_roms.py`) replaces the X Board's byte layout entirely:
+
+| Byte | Field | Values |
+| --- | --- | --- |
+| 0 | game id | 0 gforce2, 1 pdrift, 2 gloc, 3 rchase, 4 strkfgtr, 5 glocr360, 6 pdriftl |
+| 1 | flags | bit 0 deluxe cabinet (motor board stub answers on port C and the ADC), bit 1 link board present (pdriftl), bit 2 R360 (pitch and roll on ADC 0 and 2); the rest reserved |
+| 2 | Y sprite banks | 512 KB banks, for the `bank % numbanks` wrap: gforce2 8, pdrift 8, rchase 24, gloc and strkfgtr 32 |
+| 3 | 16B sprite banks | 128 KB banks: gforce2, pdrift and rchase 4, gloc and strkfgtr 16 |
+| 4 | ADC reverse mask | bit n = MAME channel n is `255 - value`: gforce2 0x02, gloc and strkfgtr 0x08 |
+| 5 | PCM bank mask | 0xF8 for every set |
+| 6 | analog mode | see Controls below |
+| 7 | IRQ2 scanline | 170 unless a capture says otherwise (open question 2) |
+| 8-63 | reserved | 0 |
+
+### Controls
+The 315-5296 ports are fixed by the board (section 2), so what changes per
+game is the analog wiring and the button names. Analog mode, descriptor
+byte 6, selects the channel map and the ranges that `yb_ana_shape` produces;
+the seven MAME channels are ADC 0-2 direct and mux inputs 0-3 on channel 3,
+selected by port E bits 1:0:
+
+| Mode | Games | Channels |
+| --- | --- | --- |
+| 0 | gforce2 | stick X on 0, stick Y on 1 (reversed), throttle on 2 |
+| 1 | gloc, strkfgtr | stick Y on mux 0 (0x40-0xC0, reversed), throttle on mux 1, stick X on mux 2 (0x20-0xE0) |
+| 2 | pdrift | brake on mux 0, gas on mux 1, steering on mux 2 (0x20-0xE0) |
+| 3 | rchase | P1 gun X and Y on 0 and 1, P2 gun X and Y on 2 and mux 0; Line of Fire's gun shaping and crosshairs |
+| 4 | glocr360 | mode 1 plus cabinet pitch on 0 and roll on 2, fed from the motor stub |
+
+Unread channels return 0x80. Button lists follow the order MiSTer-devel
+asked for on the X Board: Start, Coin and Pause before Test and Service,
+driving sets with Gas and Brake first, flight sets with the throttle buttons
+next to the stick. DIP switches come straight from MAME's port definitions
+into the `dips` and `dip_default` fields: port G is SW A (coinage) and port
+F is SW B, both read active low with 1 = off.
+
+### Verification tooling
+The X Board tools carry over as they are: `tools/mame_capture.py` and
+`frame_diff.py` for frames, `trace_compare.py` for PC traces,
+`wav_compare.py` for sound. `tools/mame_trace.py` has to grow from two CPUs
+to three (`:maincpu`, `:subx`, `:suby`) and the bench writes three trace
+files. Golden data lives in `verif/golden/<set>/`: MAME traces and captures
+next to the `*.hex` files that `pack_roms.py --hexdir` writes for the
+Verilator and Icarus benches. Each gate script `verif/board/check_mN.sh`
+has the shape of the X Board's `check_m1.sh`: build the goldens if missing,
+pack the ROMs, `make -C verif/board build` and `run FRAMES=N`, then the
+comparison tools with explicit thresholds. Frame checks render the golden
+model from the RTL's own RAM dump, not from MAME's frame of the same
+number, because the two drift.
+
 ## 4. Milestones
 
 Each row has a gate script `verif/board/check_mN.sh` that must pass before
@@ -304,12 +424,27 @@ by the user before any rbf is committed.
 | M6 | Hardware bring-up and timing closure, NVRAM, DIPs, controls, OSD | zero negative slack in the fit corner; 30 min attract without a watchdog reset; HDMI capture matches sim |
 | M7 | Power Drift (gear shift, motor stub), G-LOC, Strike Fighter (16 MB ROM slot), Rail Chase (gun modes from Line of Fire), R360 | each boots, passes its memory test, plays; MRAs and alternatives regenerated, `db.json.zip`, release |
 
+M0 in full, since it is next. Rewrite `rtl/yb_pkg.sv` from the tables in
+section 3 (clocks, SDRAM and DDR3 map, stream offsets, `board_desc_t`). Trim
+`Arcade-SegaYBoard.sv` to a `yb_core` stub whose port list is the Y Board's
+(three CPU resets, the 5296 ports, the ADC channels, two framebuffers, no
+road or tile ports) and trim `verif/board/tb_board.sv` to match. Fill
+`tools/romsets.py` with `SLOT`, `ORDER` and the `gforce2` entry; give
+`tools/pack_roms.py` the `x64` loader, the `repeat` count and the new
+`descriptor()`; teach `tools/gen_mra.py` `x64` and `repeat`; update
+`tools/tests/test_stream.py` and regenerate `releases/`. Delete
+`yb_cmptimer_5250.sv` and the other files section 1 lists as not on this
+board, and take them out of `references.md`, the `.qsf` and `lint.sh`. Write
+`verif/board/check_m0.sh` as the lint plus tool-test gate. Then a Quartus
+compile of the stub for the M10K baseline and a clean STA.
+
 ## 5. Open questions (MAME is the default answer until hardware says otherwise)
-1. Horizontal total and pixel clock: MAME 342 columns "to be verified" vs the X Board's 400 at 6.25 MHz. Assume 400.
-2. IRQ2 scanline: MAME's 170 is a tuned constant; the real source is the 315-5306. Keep it a descriptor field so it can be tuned per game without a rebuild.
+1. Horizontal total and pixel clock: MAME's 342 columns come from `set_size`, not a measured `set_raw`, so they carry no weight against the X Board's 400 at 6.25 MHz. Assume 400; a scope on a real board or a known refresh rate would settle it.
+2. IRQ2 scanline: MAME's 170 is a tuned constant; the real source is the 315-5306. Descriptor byte 7, so it can be tuned per game without a rebuild, and MAME's Q/W/E/R hotkeys give a reference value per game from captures.
 3. Sound crystal: 32.2159 MHz / 8 (MAME) or 16 MHz / 4 (PCB notes). Pitch differs by 0.7%; go with the PCB notes' 4.000 MHz unless a recording says otherwise.
 4. Y framebuffer cadence: when the render starts, when buffers swap, and whether the erase is a full FFFF fill or only inside the clip extents (MAME clears only lines whose extents are not flagged, then fills the whole bitmap anyway). Decide in M2 from what the games write.
 5. The `+27` X offset in the rotation and the 16B origin of 184: MAME calibrations, check against captures.
 6. Shared RAM arbitration between three CPUs (PALs 315-5314..5318): wait-state behaviour unknown; time-slicing is the model.
-7. Zoom clamp on Y sprites ("maximum of 8x, not 100% confirmed").
-8. MSM6253 timing: conversion time and whether the shift register reload is on the write only.
+7. 16B sprite zoom clamp: MAME clamps hzoom and vzoom to a minimum of 0x40 ("maximum of 8x, not 100% confirmed"); MacDonald's System 16 notes give the valid range as 0..0x3FF with odd behaviour above. Same parameter as the X Board, MAME's value by default. The Y sprite generator only has the zoom 0 to 1 clamp, which is MAME's guard and not a hardware claim.
+8. MSM6253 timing: the conversion clock is the 315-5296's CKOT output, whose divider is in the CNT register MAME does not emulate, so the delay from the channel write to a valid first read is unknown; MAME makes it instant. Also whether the shift register reloads only on the write. Log the CNT writes in M1 and pick the divider from them.
+9. Deluxe cabinets: what the motor board answers on port C and the ADC once a game starts driving it. MAME never runs the motor Z80, so the stub returns inactive limit switches and centred pitch and roll; if a deluxe set refuses to start on that, the answer is in its motor ROM.
