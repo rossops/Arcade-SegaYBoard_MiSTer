@@ -1,0 +1,8 @@
+# python3.12 -m venv verif/.venv && verif/.venv/bin/pip install -r verif/requirements.txt
+# (cocotb does not build on Homebrew Python 3.14)
+cocotb==2.0.1
+pytest==9.1.1
+numpy==2.5.2
+pillow==12.3.0
+imageio-ffmpeg==0.6.0
+capstone==5.0.9
