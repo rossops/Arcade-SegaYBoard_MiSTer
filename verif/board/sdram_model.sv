@@ -6,7 +6,7 @@
 `timescale 1ns/1ps
 module sdram_model #(
     parameter LATENCY = 12,
-    parameter string HEXDIR = "verif/golden/aburner2"
+    parameter string HEXDIR = "verif/golden/gforce2"
 ) (
     input             clk,
     input             init,
@@ -33,18 +33,13 @@ string hexdir;
 initial begin
     ready = 1'b0;
     if (!$value$plusargs("hexdir=%s", hexdir)) hexdir = HEXDIR;
-    load({hexdir, "/main.hex"},   SDR_MAIN_BASE);
-    load({hexdir, "/sub.hex"},    SDR_SUB_BASE);
-    load({hexdir, "/z80.hex"},    SDR_Z80_BASE);
-    load({hexdir, "/road.hex"},   SDR_ROAD_BASE);
-    load({hexdir, "/pcm.hex"},    SDR_PCM_BASE);
-    load({hexdir, "/sprite.hex"}, SDR_SPRITE_BASE);
-    load({hexdir, "/tile.hex"},   SDR_TILE_BASE);
-    begin : opt
-        integer fd;
-        fd = $fopen({hexdir, "/z80b.hex"}, "r");
-        if (fd != 0) begin $fclose(fd); load({hexdir, "/z80b.hex"}, SDR_Z80B_BASE); load({hexdir, "/pcm2.hex"}, SDR_PCM2_BASE); end
-    end
+    load({hexdir, "/main.hex"},    SDR_MAIN_BASE);
+    load({hexdir, "/subx.hex"},    SDR_SUBX_BASE);
+    load({hexdir, "/suby.hex"},    SDR_SUBY_BASE);
+    load({hexdir, "/z80.hex"},     SDR_Z80_BASE);
+    load({hexdir, "/pcm.hex"},     SDR_PCM_BASE);
+    load({hexdir, "/bsprite.hex"}, SDR_BSPR_BASE);
+    load({hexdir, "/ysprite.hex"}, SDR_YSPR_BASE);
 end
 
 function automatic [63:0] rd4(input [24:3] a);

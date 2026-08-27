@@ -8,12 +8,14 @@ convention below, and its git history shows what each decision cost.
 
 ## What is here and what is not
 - `docs/references.md` lists every carried-over file. `yb_` used to be `xb_`.
-- Not written yet: `rtl/yb_core.sv`, the 315-5305 sprite generator and the
-  315-5306 rotation, the 16B sprite layer, the mixer, the 315-5296 I/O chip,
-  the ADC, the three-CPU bus. `Arcade-SegaYBoard.sv`, `rtl/yb_pkg.sv` and
-  `verif/board/tb_board.sv` are the X Board versions and need trimming.
-  `tools/romsets.py` is empty; `tools/pack_roms.py`'s `descriptor()` still
-  packs the X Board flags.
+- M0 (branch `m0-scaffold`) trimmed the scaffold: `rtl/yb_pkg.sv`,
+  `Arcade-SegaYBoard.sv`, `verif/board/tb_board.sv`, the ROM loader and the
+  tools carry the Y Board map, stream and descriptor; `rtl/yb_core.sv` is a
+  stub with the final port list and a gradient on the real video timing;
+  `tools/romsets.py` has `gforce2`. Not written yet: the three-CPU bus, the
+  315-5296 I/O chip, the ADC, the 315-5305 sprite generator, the 315-5306
+  rotation, the 16B sprite layer, the mixer. `tools/mame_trace.py` still
+  traces two CPUs (M1 makes it three).
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the
   handful that are listed in a comment at the top of the file.

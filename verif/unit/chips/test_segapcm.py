@@ -20,7 +20,7 @@ async def serve_rom(dut):
         await RisingEdge(dut.clk)
         req = int(dut.rom_req.value)
         if req and not prev:
-            a = int(dut.rom_addr.value) * 2 - 0x120000     # SDR_PCM_BASE
+            a = int(dut.rom_addr.value) * 2 - 0x110000     # SDR_PCM_BASE
             lo = ROM[a] if 0 <= a < len(ROM) else 0xFF
             hi = ROM[a + 1] if 0 <= a + 1 < len(ROM) else 0xFF
             await ClockCycles(dut.clk, 6)

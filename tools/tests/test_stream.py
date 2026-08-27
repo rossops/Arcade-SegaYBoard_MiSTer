@@ -57,7 +57,9 @@ def test_mra_matches_packer(key):
     if not os.path.exists(zp):
         pytest.skip("ROM zip not available")
     stream, regions = pack_roms.build_stream(key, zp)
-    expected = romsets.DESC_SIZE + sum(romsets.SLOT[r] for r in romsets.ORDER[:pack_roms.last_region(rs) + 1])
+    last = pack_roms.last_region(rs)
+    # every region padded to its slot except the last one
+    expected = romsets.DESC_SIZE + sum(romsets.SLOT[r] for r in romsets.ORDER[:last]) + len(regions[romsets.ORDER[last]])
     assert len(stream) == expected
     with zipfile.ZipFile(zp) as zf:
         mra = expand_mra(gen_mra.make_mra(key, rs), zf)
@@ -73,7 +75,8 @@ def test_region_crcs(key):
         pytest.skip("ROM zip not available")
     with zipfile.ZipFile(zp) as zf:
         for region, (loader, files) in rs["regions"].items():
-            for n, s, c in files:
+            for f in files:
+                n, s, c, _ = pack_roms.file_fields(f)
                 pack_roms.read_rom(zf, n, s, c)   # raises on mismatch
 
 
@@ -84,6 +87,22 @@ def test_w16_word_order():
     assert int.from_bytes(out, "little") == 0x1234
 
 
-def test_x32_dword_order():
-    out = pack_roms.build_region("x32", [bytes([1]), bytes([2]), bytes([3]), bytes([4])])
-    assert int.from_bytes(out, "little") == 0x04030201
+def test_x64_word_order():
+    # MAME's 64-bit big-endian word (ROM 0 most significant, 16 pens MSB
+    # first) becomes four SDRAM words read in order: word 0 = {ROM0, ROM1}.
+    # The Y sprite renderer relies on that to walk the pens left to right.
+    out = pack_roms.build_region("x64", [bytes([k + 1]) for k in range(8)])
+    assert out == bytes([2, 1, 4, 3, 6, 5, 8, 7])
+    words = [int.from_bytes(out[i:i + 2], "little") for i in range(0, 8, 2)]
+    assert words == [0x0102, 0x0304, 0x0506, 0x0708]
+
+
+def test_pcm_mirrors_reach_every_bank():
+    # gforce2's two 128 KB PCM ROMs are ROM_RELOADed to fill their 512 KB
+    # banks (region populated to 0x180000); the 315-5218 bank mask F8 lets
+    # the sample table point into any mirror, so the stream must carry them.
+    rs = romsets.ROMSETS["gforce2"]
+    files = [pack_roms.file_fields(f) for f in rs["regions"]["pcm"][1]]
+    assert sum(s * rep for _, s, _, rep in files) == 0x180000
+    parts = gen_mra.region_parts("flat", rs["regions"]["pcm"][1], romsets.SLOT["pcm"], "FF")
+    assert sum(1 for p in parts if "epr-11516.106" in p) == 4

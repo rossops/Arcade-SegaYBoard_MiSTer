@@ -22,7 +22,7 @@ def build(key, zipdir, out):
     if parent == key:
         return None
     src = zipfile.ZipFile(os.path.join(zipdir, parent + ".zip"))
-    needed = {n for _, files in rs["regions"].values() for n, _, _ in files}
+    needed = {f[0] for _, files in rs["regions"].values() for f in files}
     folder = rs.get("zip_folder", key)
     dst_path = os.path.join(out, key + ".zip")
     count = 0

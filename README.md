@@ -8,14 +8,15 @@ whole frames against MAME captures before anything goes near the FPGA.
 ## Status
 
 The reusable half of the X Board core is in place (CPUs, ROM caches, math
-chips, sound board, SDRAM and DDR3 interfaces, palette, timing, tooling, CI).
-No Y Board specific hardware yet. `docs/DESIGN.md` has the hardware
+chips, sound board, SDRAM and DDR3 interfaces, palette, timing, tooling, CI)
+and the scaffold is trimmed to the Y Board's memory map, ROM stream and
+descriptor. The core itself is still a stub: no Y Board chips yet. `docs/DESIGN.md` has the hardware
 reference, the architecture and the open questions; `docs/references.md`
 says where every file came from.
 
 | M | Scope | Status |
 | --- | --- | --- |
-| M0 | Trim the scaffold to a `yb_core` stub, gforce2 ROM table and MRA, first Quartus fit | |
+| M0 | Trim the scaffold to a `yb_core` stub, gforce2 ROM table and MRA, first Quartus fit | done 2026-08-27, 69/553 M10K, gradient on hardware |
 | M1 | Three 68000s, shared RAM, math chips, 315-5296, MSM6253, interrupts | |
 | M2 | 315-5305 Y sprites into DDR3, palette, indirection | |
 | M3 | 315-5306 rotation scan-out | |

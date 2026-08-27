@@ -1,5 +1,5 @@
 //============================================================================
-//  Arcade: Sega X Board (After Burner II) for MiSTer  (emu top)
+//  Arcade: Sega Y Board (Galaxy Force II) for MiSTer  (emu top)
 //  Framework integration only; the board lives in rtl/yb_core.sv.
 //============================================================================
 
@@ -110,33 +110,27 @@ assign LED_POWER = 0;
 assign LED_DISK = 0;
 assign BUTTONS = 0;
 
-// DDR3: the two sprite framebuffers (yb_fb_if inside the core)
+// DDR3: the two Y sprite framebuffers (yb_fb_if inside the core)
 assign DDRAM_CLK = clk_ram;
 
 //////////////////////////////////   CONF   ///////////////////////////////////
 `ifndef BUILD_DATE
-`define BUILD_DATE "SegaXB"
+`define BUILD_DATE "SegaYB"
 `endif
 `ifndef BUILD_GIT
 `define BUILD_GIT "nogit"
 `endif
 
 localparam CONF_STR = {
-    "SXB;;",
+    "SYB;;",
     "-;",
     "O[2:1],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
     "O[5:3],Scandoubler Fx,None,CRT 25%,CRT 50%,CRT 75%;",
-    "O[22],Enhanced sprites (640x448),Off,On;",
     "O[7],Service Mode,Off,On;",
-    "H2O[9:8],Stick,D-Pad,Analog,Analog+D-Pad;",
-    "H2O[24:23],Analog response,Linear,Soft,Softer;",
-    "H2O[26:25],Analog range,100%,75%,50%;",
+    "H0O[9:8],Stick,D-Pad,Analog,Analog+D-Pad;",
+    "H0O[24:23],Analog response,Linear,Soft,Softer;",
+    "H0O[26:25],Analog range,100%,75%,50%;",
     "O[10],Pause when OSD open,Off,On;",
-    "H0O[11],Rear speakers,On,Off;",
-    "H1O[12],Gun control,Lightgun,Gamepad;",
-    "H1O[16:13],P1 cursor speed,50,60,70,80,90,100,10,20,30,40;",
-    "H1O[20:17],P2 cursor speed,50,60,70,80,90,100,10,20,30,40;",
-    "H1O[21],Crosshair (gamepad),On,Off;",
     "-;",
     "DIP;",
     "-;",
@@ -170,10 +164,8 @@ wire [15:0] ioctl_index;
 wire [26:0] ioctl_addr;
 wire [15:0] ioctl_dout, ioctl_din;
 wire [31:0] joystick_0, joystick_1;
-wire [15:0] joystick_l_analog_0;
+wire [15:0] joystick_l_analog_0, joystick_l_analog_1;
 wire [15:0] joystick_r_analog_0;
-wire [15:0] joystick_l_analog_1, joystick_r_analog_1;
-wire  [7:0] paddle_0;
 
 wire video_reset = RESET | status[0] | buttons[1] | ~pll_locked;
 wire reset = video_reset | ioctl_download | ~rom_loaded | ~sdram_ready_sys;
@@ -218,13 +210,11 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_1(joystick_1),
     .joystick_l_analog_0(joystick_l_analog_0),
     .joystick_r_analog_0(joystick_r_analog_0),
-    .joystick_l_analog_1(joystick_l_analog_1),
-    .joystick_r_analog_1(joystick_r_analog_1),
-    .paddle_0(paddle_0)
+    .joystick_l_analog_1(joystick_l_analog_1)
 );
 // DIP switches arrive from the MRA <switches> block as ioctl index 254:
-// byte 0 = SWA (coinage), byte 1 = SWB (cabinet/lives/difficulty)
-reg [7:0] dsw_a = 8'hFF, dsw_b = 8'hDD;
+// byte 0 = SW A (315-5296 port G, coinage), byte 1 = SW B (port F)
+reg [7:0] dsw_a = 8'hFF, dsw_b = 8'h7E;
 always @(posedge clk_sys) begin
     if (ioctl_download && ioctl_wr && ioctl_index == 16'd254 && ioctl_addr == 27'd0) begin
         dsw_a <= ioctl_dout[7:0];
@@ -232,8 +222,8 @@ always @(posedge clk_sys) begin
     end
 end
 
-// NVRAM (backup RAM, 32 KB) as ioctl index 3: download at load, upload on
-// request; the core asserts nv_modified when the game writes the RAM.
+// NVRAM (sub X backup RAM, 16 KB) as ioctl index 3: download at load, upload
+// on request; the core asserts nv_modified when the game writes the RAM.
 wire        nv_modified;
 wire        nv_download = ioctl_download && (ioctl_index[7:0] == 8'd3);
 wire        nv_upload   = ioctl_upload   && (ioctl_index[7:0] == 8'd3);
@@ -244,12 +234,8 @@ wire [24:1] sw_addr;
 wire [15:0] sw_din;
 wire  [1:0] sw_be;
 board_desc_t board_desc;
-assign status_menumask = {13'd0,
-    board_desc.ana_mode == 3'd5,   // bit 2: gun game, no stick/analog options
-    ~board_desc.gun_inputs,        // bit 1: no gun options
-    ~board_desc.has_snd2};         // bit 0: no rear speakers
-wire        tile_wr; wire [17:0] tile_waddr; wire [7:0] tile_wdata;
-wire        key_wr;  wire [12:0] key_waddr;  wire [7:0] key_wdata;
+assign status_menumask = {15'd0,
+    board_desc.ana_mode == 3'd3};  // bit 0: gun game (Rail Chase), no stick/analog options
 
 yb_rom_loader loader (
     .clk(clk_sys), .rst(~pll_locked),
@@ -260,8 +246,6 @@ yb_rom_loader loader (
     .board_desc(board_desc),
     .sdr_wr_req(sw_req), .sdr_wr_addr(sw_addr), .sdr_wr_din(sw_din),
     .sdr_wr_be(sw_be), .sdr_wr_ack(sw_ack),
-    .tile_wr(tile_wr), .tile_waddr(tile_waddr), .tile_wdata(tile_wdata),
-    .key_wr(key_wr), .key_waddr(key_waddr), .key_wdata(key_wdata),
     .rom_loaded(rom_loaded)
 );
 
@@ -293,23 +277,23 @@ sdram sdram (
 );
 
 //////////////////////////////   INPUTS   /////////////////////////////////////
-// joystick bits: 0 right 1 left 2 down 3 up 4 vulcan 5 missile 6 start
-//                7 coin 8 test 9 service
+// joystick bits: 0 right 1 left 2 down 3 up 4 button 1 5 button 2 6 start
+//                7 coin 8 pause 9 test 10 service 11 gas 12 brake (MRA order)
 // analog: raw MiSTer axes; the core maps them per game (descriptor analog mode)
 // OSD order D-Pad, Analog, Analog+D-Pad (D-pad first: most players have one);
 // the core encodes 0 analog, 1 d-pad, 2 both
 wire [1:0] stick_mode = (status[9:8] == 2'd0) ? 2'd1 : (status[9:8] == 2'd1) ? 2'd0 : 2'd2;
 
-// Pause: the mapped button (joystick bit 10) or the OSD open with the option set
+// Pause: the mapped button or the OSD open with the option set.
 // Button positions follow the MRA's list, which puts the buttons players bind
 // first at the front. Three layouts, chosen from the board descriptor:
-//   driving (wheel/pedal analog modes): Gas, Brake, A, B, Start, Coin, Pause, Test, Service
-//   flight (After Burner, Thunder Blade): A, B, Speed Up, Slow Down, Start, Coin, Pause, Test, Service
-//   the rest:                             A, B, Start, Coin, Pause, Test, Service
+//   driving (Power Drift):              Gas, Brake, A, B, Start, Coin, Pause, Test, Service
+//   flight (Galaxy Force, G-LOC, ...):  A, B, Speed Up, Slow Down, Start, Coin, Pause, Test, Service
+//   the rest (Rail Chase):              A, B, Start, Coin, Pause, Test, Service
 // The core keeps one fixed layout (4 A, 5 B, 6 Start, 7 Coin, 8 Test,
 // 9 Service, 10 Pause, 11 Gas/Speed Up, 12 Brake/Slow Down).
-wire driving_set = (board_desc.ana_mode == 3'd2) || (board_desc.ana_mode == 3'd3) || (board_desc.ana_mode == 3'd4);
-wire flight_set  = board_desc.has_throttle && (board_desc.ana_mode == 3'd0 || board_desc.ana_mode == 3'd1);
+wire driving_set = (board_desc.ana_mode == 3'd2);
+wire flight_set  = (board_desc.ana_mode == 3'd0) || (board_desc.ana_mode == 3'd1) || (board_desc.ana_mode == 3'd4);
 wire [1:0] btn_layout = driving_set ? 2'd2 : flight_set ? 2'd1 : 2'd0;
 function automatic [15:0] map_buttons(input [15:0] j, input [1:0] lay);
     case (lay)
@@ -328,10 +312,8 @@ wire        ce_pix, hs, vs, hb, vb;
 wire signed [15:0] aud_l, aud_r;
 
 yb_core core (
-    .clk_sys(clk_sys), .clk_ram(clk_ram), .reset(reset), .pause(pause), .hires(status[22]), .rear_en(~status[11]),
+    .clk_sys(clk_sys), .clk_ram(clk_ram), .reset(reset), .pause(pause),
     .board_desc(board_desc),
-    .tile_wr(tile_wr), .tile_waddr(tile_waddr), .tile_wdata(tile_wdata),
-    .key_wr(key_wr), .key_waddr(key_waddr), .key_wdata(key_wdata),
     .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
     .DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD),
     .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE),
@@ -343,24 +325,22 @@ yb_core core (
     .p5_req(p5_req), .p5_addr(p5_addr), .p5_dout(p5_dout), .p5_ack(p5_ack),
     .p6_req(p6_req), .p6_addr(p6_addr), .p6_dout(p6_dout), .p6_ack(p6_ack),
     .p7_req(p7_req), .p7_addr(p7_addr), .p7_dout(p7_dout), .p7_ack(p7_ack),
+    .nv_download(nv_download), .nv_upload(nv_upload), .nv_wr(ioctl_wr), .nv_rd(ioctl_rd),
+    .nv_addr(ioctl_addr[13:1]), .nv_din(ioctl_dout), .nv_dout(ioctl_din), .nv_modified(nv_modified),
     .p1_buttons(p1_btn), .p2_buttons(p2_btn),
-    .aim1_x(joystick_r_analog_0[7:0]), .aim1_y(joystick_r_analog_0[15:8]),
-    .aim2_x(joystick_r_analog_1[7:0]), .aim2_y(joystick_r_analog_1[15:8]),
-    .stick2_x(joystick_l_analog_1[7:0]), .stick2_y(joystick_l_analog_1[15:8]),
-    .gun_mode(status[12]), .speed1(status[16:13]), .speed2(status[20:17]), .xhair_en(~status[21]),
     .stick_x(joystick_l_analog_0[7:0]), .stick_y(joystick_l_analog_0[15:8]),
+    .stick2_x(joystick_l_analog_1[7:0]), .stick2_y(joystick_l_analog_1[15:8]),
     .throttle(joystick_r_analog_0[15:8] ^ 8'h80), .stick_mode(stick_mode),
     .ana_curve(status[24:23]), .ana_range(status[26:25]),
     .dsw_a(dsw_a), .dsw_b(dsw_b),
     .service(p1_btn[9]), .test(status[7] | p1_btn[8]),
-    .coin1(p1_btn[7]), .coin2(1'b0),
-    .nv_download(nv_download), .nv_upload(nv_upload), .nv_wr(ioctl_wr), .nv_rd(ioctl_rd),
-    .nv_addr(ioctl_addr[15:1]), .nv_din(ioctl_dout), .nv_dout(ioctl_din), .nv_modified(nv_modified),
+    .coin1(p1_btn[7]), .coin2(p2_btn[7]),
     .r(r), .g(g), .b(b),
     .ce_vid(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(aud_l), .audio_r(aud_r),
     .trace_main_addr(), .trace_main_start(), .trace_main_fc(),
-    .trace_sub_addr(), .trace_sub_start(), .trace_sub_fc()
+    .trace_subx_addr(), .trace_subx_start(), .trace_subx_fc(),
+    .trace_suby_addr(), .trace_suby_start(), .trace_suby_fc()
 );
 
 assign AUDIO_L = aud_l;
@@ -377,9 +357,6 @@ wire [11:0] aspect_ary = (aspect == 0) ? 12'd3 : 12'd0;
 // gamma_bus is wired explicitly from hps_io (Quartus 17 did not resolve it
 // through .*), which gives the framework's "Gamma correction" OSD curves.
 wire vga_de_av;
-// WIDTH only sizes the scandoubler's line buffers (M10K), and the scandoubler
-// is bypassed in the 640-pixel enhanced mode (fx forced to 0, no forced
-// scandoubler: the output is already 31 kHz), so 320 covers both modes.
 arcade_video #(.WIDTH(320), .DW(24), .GAMMA(1)) arcade_video (
     .*,
     .VGA_DE(vga_de_av),
@@ -391,7 +368,7 @@ arcade_video #(.WIDTH(320), .DW(24), .GAMMA(1)) arcade_video (
     .VBlank(vb),
     .HSync(hs),
     .VSync(vs),
-    .fx(status[22] ? 3'd0 : scandoubler_fx),
+    .fx(scandoubler_fx),
     .forced_scandoubler(1'b0)
 );
 

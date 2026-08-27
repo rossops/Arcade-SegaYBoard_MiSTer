@@ -18,16 +18,16 @@ were verified on that core against MAME and on a DE10-Nano:
 | --- | --- |
 | `rtl/cpu/yb_m68k_bus.sv` | fx68k wrapper: unified bus, DTACK, IPL, VPA autovector |
 | `rtl/cpu/yb_rom_cache.sv` | direct-mapped 68000/Z80 ROM cache over SDRAM (altsyncram, fill served from fill data) |
-| `rtl/cpu/yb_math_5248.sv`, `yb_math_5249.sv`, `yb_cmptimer_5250.sv` | 315-5248 multiplier, 315-5249 divider, 315-5250 compare/timer/sound latch |
+| `rtl/cpu/yb_math_5248.sv`, `yb_math_5249.sv` | 315-5248 multiplier, 315-5249 divider (the X Board's 315-5250 was dropped in M0: the Y Board has none) |
 | `rtl/audio/yb_soundsys.sv`, `yb_segapcm_5218.sv` | Z80 sound board, YM2151 glue, 315-5218 PCM |
 | `rtl/mem/sdram.sv`, `yb_rom_loader.sv`, `yb_dpram.sv` | SDRAM controller (ports p0..p7), ioctl stream loader, two-clock byte-enabled RAM |
 | `rtl/mem/yb_fb_if.sv` | DDR3 framebuffer interface (run writes, line reads, erase) |
 | `rtl/video/yb_video_timing.sv` | 400x262 @ 6.25 MHz timing with the 2x output grid |
 | `rtl/video/yb_palette_5242.sv`, `yb_pal_lut.svh` | 315-5242 palette and resistor-ladder LUTs |
 | `rtl/io/yb_ana_shape.sv` | analog response curves (OSD Linear/Soft/Softer) |
-| `rtl/yb_pkg.sv` | shared package, still holds the X Board constants |
-| `Arcade-SegaYBoard.sv`, `.qsf`, `.sdc`, `.qpf`, `.srf` | MiSTer emu wrapper and Quartus project (the wrapper still instantiates the X Board core) |
-| `verif/` | lint scripts, board bench (X Board's, to rewrite), SDRAM/DDR3 models, golden models and cocotb tests for the chips above |
+| `rtl/yb_pkg.sv` | shared package, rewritten in M0 for the Y Board map, stream and descriptor |
+| `Arcade-SegaYBoard.sv`, `.qsf`, `.sdc`, `.qpf`, `.srf` | MiSTer emu wrapper and Quartus project (trimmed to the Y Board core's ports in M0) |
+| `verif/` | lint scripts, board bench (trimmed to `yb_core` in M0), SDRAM/DDR3 models, golden models and cocotb tests for the chips above |
 | `tools/` | MRA generator and packer, MiSTer Downloader db, MAME capture/trace/wav tools, MiSTer ssh helper, Quartus build-id and STA scripts |
 
 ## Vendored IP (pinned, unchanged)

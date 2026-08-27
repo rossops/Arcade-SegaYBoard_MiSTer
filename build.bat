@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem Sega X Board for MiSTer - Quartus Prime 17.0 Lite command-line build.
+rem Sega Y Board for MiSTer - Quartus Prime 17.0 Lite command-line build.
 rem Usage: build.bat            (full compile, copies dated .rbf to releases\)
 if "%QUARTUS_ROOTDIR%"=="" set QUARTUS_ROOTDIR=C:\intelFPGA_lite\17.0\quartus
 set PATH=%QUARTUS_ROOTDIR%\bin64;%PATH%

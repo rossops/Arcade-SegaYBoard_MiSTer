@@ -1,93 +1,80 @@
 //============================================================================
 //  Sega Y Board for MiSTer — shared package
-//  Carried over from the X Board core; every constant below is X Board's until
-//  the Y Board memory map, stream layout and descriptor replace it.
 //  Board constants, SDRAM/DDR3 map, ioctl stream layout and the per-game
-//  descriptor that the MRA prepends to the ROM stream (docs/DESIGN.md).
+//  descriptor that the MRA prepends to the ROM stream. docs/DESIGN.md ("ROM
+//  stream and descriptor") is the reference; tools/romsets.py holds the same
+//  slots and tools/pack_roms.py the same descriptor bytes.
 //============================================================================
 package yb_pkg;
 
     // ---- board clocks (Hz) -------------------------------------------------
-    localparam int PCB_MASTER_HZ = 50_000_000;   // 68000 x2 = /4, pixel = /8
-    localparam int PCB_SOUND_HZ  = 16_000_000;   // Z80 / YM2151 = /4, 315-5218
+    localparam int PCB_MASTER_HZ = 50_000_000;   // 68000 x3 = /4, 315-5296 = /8, pixel = /8
+    localparam int PCB_SOUND_HZ  = 16_000_000;   // Z80 / YM2151 / 315-5218 = /4 (open question 3)
     localparam int CLK_SYS_HZ    = 50_000_000;   // == PCB_MASTER_HZ (exact)
     localparam int CLK_RAM_HZ    = 100_000_000;
 
-    // ---- video timing (MAME: MASTER_CLOCK/8, 400, 0, 320, 262, 0, 224) -----
+    // ---- video timing: 400 x 262 at clk_sys/8, 320 x 224 visible ----------
+    // MAME's 342 columns are a set_size placeholder (open question 1).
     localparam int H_TOTAL   = 400;
     localparam int H_ACTIVE  = 320;
     localparam int V_TOTAL   = 262;
     localparam int V_ACTIVE  = 224;
-    localparam int VBLANK_LINE = 223;   // IRQ4 asserted at start of this line
-    localparam int LATCH_LINE  = 261;   // 315-5197 latches its registers here
+    localparam int VBLANK_LINE = 223;   // IRQ4 asserted during this line
+    localparam int LATCH_LINE  = 261;   // yb_video_timing's end-of-frame pulse
+    localparam int IRQ2_LINE_DEFAULT = 170;   // 315-5306 timer IRQ, descriptor byte 7
 
-    // ---- SDRAM byte map (25-bit byte address, 32 MB) -----------------------
-    localparam [24:0] SDR_MAIN_BASE    = 25'h000_0000;  // 512 KB slot
-    localparam [24:0] SDR_SUB_BASE     = 25'h008_0000;  // 512 KB slot
-    localparam [24:0] SDR_Z80_BASE     = 25'h010_0000;  //  64 KB slot
-    localparam [24:0] SDR_ROAD_BASE    = 25'h011_0000;  //  64 KB slot
-    localparam [24:0] SDR_PCM_BASE     = 25'h012_0000;  // 512 KB slot
-    localparam [24:0] SDR_SPRITE_BASE  = 25'h020_0000;  //   4 MB slot
-    localparam [24:0] SDR_TILE_BASE    = 25'h060_0000;  // 256 KB slot
-    localparam [24:0] SDR_Z80B_BASE    = 25'h064_0000;  //  64 KB slot (SMGP rear-speaker Z80)
-    localparam [24:0] SDR_PCM2_BASE    = 25'h065_0000;  // 512 KB slot (SMGP second 315-5218)
-    localparam [24:0] SDR_END          = 25'h06D_0000;
+    // ---- SDRAM byte map (25-bit byte address, 32 MB), contiguous slots ----
+    localparam [24:0] SDR_MAIN_BASE = 25'h000_0000;  // 512 KB slot, main 68000
+    localparam [24:0] SDR_SUBX_BASE = 25'h008_0000;  // 256 KB, sub X 68000
+    localparam [24:0] SDR_SUBY_BASE = 25'h00C_0000;  // 256 KB, sub Y 68000
+    localparam [24:0] SDR_Z80_BASE  = 25'h010_0000;  //  64 KB
+    localparam [24:0] SDR_PCM_BASE  = 25'h011_0000;  //   2 MB, 315-5218 samples
+    localparam [24:0] SDR_BSPR_BASE = 25'h031_0000;  //   2 MB, 16B sprite ROM (16-bit words)
+    localparam [24:0] SDR_YSPR_BASE = 25'h051_0000;  //  16 MB, Y sprite ROM (64-bit words as four 16-bit halves)
+    localparam [24:0] SDR_END       = 25'h151_0000;
 
-    // ---- ioctl index-0 stream layout (byte offsets; every region padded) ---
-    localparam [26:0] OFF_DESC   = 27'h000_0000;   // 64-byte descriptor
-    localparam [26:0] OFF_MAIN   = 27'h000_0040;
-    localparam [26:0] OFF_SUB    = OFF_MAIN   + 27'h08_0000;
-    localparam [26:0] OFF_Z80    = OFF_SUB    + 27'h08_0000;
-    localparam [26:0] OFF_ROAD   = OFF_Z80    + 27'h01_0000;
-    localparam [26:0] OFF_PCM    = OFF_ROAD   + 27'h01_0000;
-    localparam [26:0] OFF_SPRITE = OFF_PCM    + 27'h08_0000;
-    localparam [26:0] OFF_TILE   = OFF_SPRITE + 27'h40_0000;
-    localparam [26:0] OFF_KEY    = OFF_TILE   + 27'h04_0000;   // 8 KB FD1094 key
-    localparam [26:0] OFF_Z80B   = OFF_KEY    + 27'h00_2000;
-    localparam [26:0] OFF_PCM2   = OFF_Z80B   + 27'h01_0000;
-    localparam [26:0] OFF_END    = OFF_PCM2   + 27'h08_0000;
+    // ---- ioctl index-0 stream layout (byte offsets) -----------------------
+    // Every region is padded to its slot except the last one (Y sprites), so
+    // stream offset = SDRAM offset + OFF_MAIN and the loader is a plain copy.
+    localparam [26:0] OFF_DESC = 27'h000_0000;   // 64-byte descriptor
+    localparam [26:0] OFF_MAIN = 27'h000_0040;
+    localparam [26:0] OFF_SUBX = OFF_MAIN + 27'h08_0000;
+    localparam [26:0] OFF_SUBY = OFF_SUBX + 27'h04_0000;
+    localparam [26:0] OFF_Z80  = OFF_SUBY + 27'h04_0000;
+    localparam [26:0] OFF_PCM  = OFF_Z80  + 27'h01_0000;
+    localparam [26:0] OFF_BSPR = OFF_PCM  + 27'h20_0000;
+    localparam [26:0] OFF_YSPR = OFF_BSPR + 27'h20_0000;
+    localparam [26:0] OFF_END  = OFF_YSPR + 27'h100_0000;
 
-    // ---- DDR3 framebuffers (sprite generator 315-5211A) --------------------
-    // Two 512x256x16-bit buffers, 256 KB each.
+    // ---- DDR3: two 512x512x16 Y sprite framebuffers, 512 KB each ----------
     localparam [28:0] DDR_FB0_BASE = 29'h0600_0000;  // 0x3000_0000 >> 3, in 64-bit units
-    localparam [28:0] DDR_FB1_BASE = 29'h0600_8000;  // 0x3004_0000 >> 3
+    localparam [28:0] DDR_FB1_BASE = 29'h0601_0000;  // 0x3008_0000 >> 3
 
     // ---- per-game descriptor (first 64 bytes of the stream) ----------------
-    //  byte 0: game id (0 = aburner2, 1 = aburner, 2 = thndrbld, ...)
-    //  byte 1: flags: bit0 road_priority (0: road fg under tiles, 1: over)
-    //                 bit1 thndrbld sprite-RAM wipe hack
-    //                 bit2 has throttle lever analog channel
-    //                 bit3 second sound board (Z80 + 315-5218, SMGP deluxe)
-    //                 bit4 I/O chip 0 port A bits 5:0 read 0 (SMGP motor) instead of 1
-    //                 bit5 main CPU is an FD1094 (key region present)
-    //                 bit6 GP Rider link hack: timer+vblank present IPL 4, never 6 (MAME m_gprider_hack)
-    //                 bit7 Last Survivor input multiplexer on I/O chip 1 port B (select: chip 0 port D bits 6:5)
-    //  byte 2: sprite ROM bank count (aburner2 = 8 x 256 KB)
-    //  byte 3: ADC reverse mask (bit n: channel n = 255 - value)
-    //  byte 4: PCM ROM bank mask (315-5218 bankmask, aburner2 = 0x70)
-    //  byte 5: bits 2:0 analog mode (0: After Burner ranges, throttle on ADC2;
-    //          1: full range, throttle on ADC1 and stick Y on ADC2 - Thunder Blade;
-    //          2: driving - steering ADC0, gas ADC1, brake ADC2 - Super Monaco GP;
-    //          3: driving, steering 0x20..0xE0 reversed, full-range pedals - Racing Hero, A.B. Cop;
-    //          4: driving, steering full range, pedals 0x10..0xEF - GP Rider;
-    //          5: lightguns - P1 X/Y on ADC0/1, P2 X/Y on ADC2/3 - Line of Fire)
-    //  byte 6: bit0 Line of Fire gun inputs: I/O chip 1 port B bits 7:4 = P1 trigger, P1 bomb, P2 trigger, P2 bomb
-    //  bytes 7..63: reserved (0)
+    //  byte 0: game id (0 gforce2, 1 pdrift, 2 gloc, 3 rchase, 4 strkfgtr,
+    //          5 glocr360, 6 pdriftl)
+    //  byte 1: flags: bit0 deluxe cabinet (motor board stub on port C / ADC)
+    //                 bit1 link board present (pdriftl)
+    //                 bit2 R360 (cabinet pitch and roll on ADC 0 and 2)
+    //  byte 2: Y sprite ROM bank count, 512 KB banks (bank % count wrap)
+    //  byte 3: 16B sprite ROM bank count, 128 KB banks
+    //  byte 4: ADC reverse mask (bit n: MAME channel n reads 255 - value)
+    //  byte 5: 315-5218 bank mask (0xF8 on every set)
+    //  byte 6: bits 2:0 analog mode (0 gforce2, 1 flight gloc/strkfgtr,
+    //          2 driving pdrift, 3 guns rchase, 4 R360)
+    //  byte 7: IRQ2 scanline (170 unless tuned)
+    //  bytes 8..63: reserved (0)
     typedef struct packed {
         logic [7:0] game_id;
-        logic       road_priority;
-        logic       thndrbld_hack;
-        logic       has_throttle;
-        logic [7:0] sprite_banks;
+        logic       deluxe;
+        logic       link;
+        logic       r360;
+        logic [7:0] yspr_banks;
+        logic [7:0] bspr_banks;
         logic [7:0] adc_reverse;
         logic [7:0] pcm_bankmask;
         logic [2:0] ana_mode;
-        logic       has_snd2;
-        logic       motor_zero;
-        logic       fd1094;
-        logic       irq_hack;
-        logic       mux_inputs;
-        logic       gun_inputs;
+        logic [7:0] irq2_line;
     } board_desc_t;
 
 endpackage

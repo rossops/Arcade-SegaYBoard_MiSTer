@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Build the ioctl index-0 byte stream for a ROM set from a MAME zip.
 
-    pack_roms.py aburner2 --zip path/to/aburner2.zip --out stream.bin [--hexdir DIR]
+    pack_roms.py gforce2 --zip path/to/gforce2.zip --out stream.bin [--hexdir DIR]
 
 The stream is exactly what the MRA makes the MiSTer host send (little-endian
 16-bit words, WIDE=1): 64-byte descriptor, then each region in yb_pkg order,
-zero-padded to its slot. --hexdir also writes one $readmemh file per region
-(16-bit words, SDRAM word order) for the simulators.
+padded to its slot except the last one. --hexdir also writes one $readmemh
+file per region (16-bit words, SDRAM word order) for the simulators.
 """
-import argparse, os, struct, sys, zipfile, zlib
+import argparse, os, sys, zipfile, zlib
 
 sys.path.insert(0, os.path.dirname(__file__))
 from romsets import ROMSETS, SLOT, ORDER, DESC_SIZE
@@ -17,16 +17,19 @@ from romsets import ROMSETS, SLOT, ORDER, DESC_SIZE
 def descriptor(rs):
     d = bytearray(DESC_SIZE)
     d[0] = rs["game_id"]
-    d[1] = ((rs["road_priority"] & 1) | ((rs["thndrbld_hack"] & 1) << 1) | ((rs["has_throttle"] & 1) << 2)
-            | ((rs.get("has_snd2", 0) & 1) << 3) | ((rs.get("motor_zero", 0) & 1) << 4)
-            | ((rs.get("fd1094", 0) & 1) << 5) | ((rs.get("irq_hack", 0) & 1) << 6)
-            | ((rs.get("mux_inputs", 0) & 1) << 7))
-    d[2] = rs["sprite_banks"]
-    d[3] = rs["adc_reverse"]
-    d[4] = rs["pcm_bankmask"]
-    d[5] = rs.get("ana_mode", 0) & 7
-    d[6] = rs.get("gun_inputs", 0) & 1
+    d[1] = (rs.get("deluxe", 0) & 1) | ((rs.get("link", 0) & 1) << 1) | ((rs.get("r360", 0) & 1) << 2)
+    d[2] = rs["yspr_banks"]
+    d[3] = rs["bspr_banks"]
+    d[4] = rs["adc_reverse"]
+    d[5] = rs["pcm_bankmask"]
+    d[6] = rs["ana_mode"] & 7
+    d[7] = rs.get("irq2_line", 170)
     return bytes(d)
+
+
+def file_fields(f):
+    """(name, size, crc, repeat) from a 3- or 4-tuple."""
+    return f[0], f[1], f[2], (f[3] if len(f) > 3 else 1)
 
 
 def read_rom(zf, name, size, crc):
@@ -61,15 +64,17 @@ def build_region(loader, roms):
             for j in range(len(even)):
                 out += bytes((odd[j], even[j]))
         return bytes(out)
-    if loader == "x32":
+    if loader == "x64":
         out = bytearray()
-        for i in range(0, len(roms), 4):
-            b0, b1, b2, b3 = roms[i:i + 4]
-            assert len(b0) == len(b1) == len(b2) == len(b3)
-            # MAME REGION32_LE: dword = b0 | b1<<8 | b2<<16 | b3<<24.
-            # Stream as LE words: (b0,b1) then (b2,b3).
-            for j in range(len(b0)):
-                out += bytes((b0[j], b1[j], b2[j], b3[j]))
+        for i in range(0, len(roms), 8):
+            g = roms[i:i + 8]
+            assert len(g) == 8 and all(len(x) == len(g[0]) for x in g)
+            # MAME REGION64_BE: ROM k is byte k of the big-endian 64-bit word,
+            # ROM 0 most significant. Stored as four 16-bit words, word 0 =
+            # {ROM0, ROM1}, so the pens read out in order; each word is emitted
+            # low byte first like the w16 case.
+            for j in range(len(g[0])):
+                out += bytes((g[1][j], g[0][j], g[3][j], g[2][j], g[5][j], g[4][j], g[7][j], g[6][j]))
         return bytes(out)
     raise ValueError(loader)
 
@@ -82,17 +87,25 @@ def last_region(rs):
 def build_stream(setname, zippath):
     rs = ROMSETS[setname]
     regions = {}
+    last = last_region(rs)
     with zipfile.ZipFile(zippath) as zf:
-        for region in ORDER:
+        for idx, region in enumerate(ORDER[:last + 1]):
             loader, files = rs["regions"].get(region, ("flat", []))
-            roms = [read_rom(zf, n, s, c) for n, s, c in files]
+            roms = []
+            for f in files:
+                n, s, c, rep = file_fields(f)
+                if rep > 1 and loader != "flat":
+                    raise SystemExit(f"{n}: repeat is only supported in flat regions")
+                roms.append(read_rom(zf, n, s, c) * rep)
             data = build_region(loader, roms)
             if len(data) > SLOT[region]:
                 raise SystemExit(f"{region}: {len(data):#x} exceeds slot {SLOT[region]:#x}")
-            # MAME's PCM region is ROMREGION_ERASEFF: unpopulated ROM reads 0xFF
+            # MAME's PCM region is ROMREGION_ERASEFF: unpopulated ROM reads 0xFF.
+            # The last region is not padded (it is the 16 MB Y sprite slot).
             fill = b"\xff" if region == "pcm" else b"\x00"
-            regions[region] = data + fill * (SLOT[region] - len(data))
-    stream = descriptor(rs) + b"".join(regions[r] for r in ORDER[:last_region(rs) + 1])
+            pad = 0 if idx == last else SLOT[region] - len(data)
+            regions[region] = data + fill * pad
+    stream = descriptor(rs) + b"".join(regions[r] for r in ORDER[:last + 1])
     return stream, regions
 
 
@@ -111,29 +124,12 @@ def main():
     a = ap.parse_args()
     stream, regions = build_stream(a.set, a.zip)
 
-    rs = ROMSETS[a.set]
     with open(a.out, "wb") as f:
         f.write(stream)
     if a.hexdir:
         os.makedirs(a.hexdir, exist_ok=True)
-        for r in ORDER[:last_region(rs) + 1]:
-            d = regions[r]
+        for r, d in regions.items():
             write_hex(os.path.join(a.hexdir, f"{r}.hex"), d)
-        # road ROM as a byte file for the BRAM road ROM ($readmemh)
-        with open(os.path.join(a.hexdir, "roadrom.hex"), "w") as f:
-            for i in range(0x10000):
-                f.write(f"{regions['road'][i]:02x}\n")
-        # FD1094 key as a byte file for the key RAM ($readmemh, +keyrom)
-        if rs["regions"].get("key", ("flat", []))[1]:
-            with open(os.path.join(a.hexdir, "keyrom.hex"), "w") as f:
-                for i in range(0x2000):
-                    f.write(f"{regions['key'][i]:02x}\n")
-        # tile ROM planes as byte files for the BRAM tile ROM ($readmemh)
-        t = regions["tile"]
-        for p in range(3):
-            with open(os.path.join(a.hexdir, f"tilerom{p}.hex"), "w") as f:
-                for i in range(0x10000):
-                    f.write(f"{t[p * 0x10000 + i]:02x}\n")
     print(f"{a.out}: {len(stream)} bytes ({len(stream)/1048576:.2f} MB)")
 
 

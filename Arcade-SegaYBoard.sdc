@@ -11,10 +11,10 @@ set_multicycle_path -to {*_osd|multiscan*} -hold 1
 proc yb_require {present what} {
     if {$present} { return 1 }
     if {[string match "quartus_map" $::quartus(nameofexecutable)]} {
-        post_message -type warning "xb SDC: $what not elaborated yet; deferring to fit/STA"
+        post_message -type warning "yb SDC: $what not elaborated yet; deferring to fit/STA"
         return 0
     }
-    error "xb SDC: expected $what but it is missing at $::quartus(nameofexecutable)"
+    error "yb SDC: expected $what but it is missing at $::quartus(nameofexecutable)"
 }
 
 #**************************************************************
