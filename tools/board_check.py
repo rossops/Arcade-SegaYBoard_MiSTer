@@ -6,13 +6,14 @@ N+1 to be pixel-exact.
 
     board_check.py verif/board/out 100 [gforce2]
 
-The scan-out is MAME's full affine walk (verif/models/rotate5306.py).
+The frame is the full chain: Y sprites, the affine scan-out, the 16B
+sprites (from the list snapshotted at the same moment) and the mixer.
 """
 import os, sys, zipfile
 from PIL import Image
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "verif"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from models import ysprite5305 as ys, rotate5306 as rt, palette5242 as pal
+from models import ysprite5305 as ys, rotate5306 as rt, bsprite5196 as bs, mixer5312 as mx, palette5242 as pal
 from romsets import ROMSETS
 ZIPDIR = "/Volumes/roms/Arcade/MAME 0.289 ROMs (merged)"
 
@@ -29,8 +30,12 @@ def main(outdir, frame, setname="gforce2"):
     palram = words(os.path.join(outdir, "rtl_paletteram.bin"))
     zf = zipfile.ZipFile(os.path.join(ZIPDIR, rs["zipfile"] + ".zip"))
     rom = ys.load_rom_qwords(zf, [f[0] for f in rs["regions"]["ysprite"][1]])
+    brom = bs.load_rom_words(zf, [f[0] for f in rs["regions"]["bsprite"][1]])
+    blist = words(os.path.join(outdir, "rtl_bspriteram.bin"))
     fb = ys.render(splist, rotbuf, rom, rs["yspr_banks"])
-    idx, _ = rt.scanout(fb, rotbuf, W, H)
+    yidx, ypri = rt.scanout(fb, rotbuf, W, H)
+    bfb = bs.render(blist, brom, rs["bspr_banks"])
+    idx, eff = mx.mix(yidx, ypri, bfb)
     shown = frame + 1
     rtl = Image.open(os.path.join(outdir, f"frame_{shown:04d}.ppm")).convert("RGB")
     ok = 0
@@ -38,7 +43,7 @@ def main(outdir, frame, setname="gforce2"):
     mism = []
     for y in range(H):
         for x in range(W):
-            exp = pal.entry_rgb(palram[idx[y][x]], False)
+            exp = pal.entry_rgb(palram[idx[y][x]], eff[y][x])
             got = rtl.getpixel((x, y))
             if got == exp: ok += 1
             else:

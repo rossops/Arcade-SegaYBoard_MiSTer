@@ -5,8 +5,9 @@
 //  the MSM6253 behind its /FMCS window, the scanline interrupts, the MB3773
 //  watchdog and the sound latch. The three CPUs share one 64 KB RAM through
 //  a one-access-per-clock arbiter. Video chips arrive in M2-M4: the display
-//  is the Y layer (M2: 315-5305 into DDR3, translation-only scan-out,
-//  palette); the 16B layer and mixer come in M4, the Z80 sound board in M5.
+//  is the Y layer (315-5305 into DDR3, 315-5306 scan-out) under the 16B
+//  layer (315-5196) through the 315-5312 mixer and the palette; the Z80
+//  sound board comes in M5.
 //============================================================================
 import yb_pkg::*;
 
@@ -389,9 +390,10 @@ end
 yb_dpram #(.AW(11)) rotateram (.clk(clk_sys), .a_addr({rot_bank, ya[10:1]}), .a_din(y_dout), .a_be(y_be),
     .a_we(y_valid && y_wr && y_sel_rot && y_start), .a_dout(rot_q),
     .b_clk(clk_ram), .b_addr({~rot_bank, rot_rd_addr}), .b_dout(rot_rd_q));
+wire [10:0] bspr_rd_addr; wire [15:0] bspr_rd_q;
 yb_dpram #(.AW(11)) bspriteram (.clk(clk_sys), .a_addr(ya[11:1]), .a_din(y_dout), .a_be(y_be),
     .a_we(y_valid && y_wr && y_sel_bspr && y_start), .a_dout(bspr_q),
-    .b_clk(clk_sys), .b_addr(11'd0), .b_dout());
+    .b_clk(clk_ram), .b_addr(bspr_rd_addr), .b_dout(bspr_rd_q));
 // the palette (315-5242) is instantiated with the video pipeline below
 
 wire [15:0] y_mult_q, y_div_q;
@@ -493,7 +495,8 @@ wire       go_lvl = (vcnt == 9'd226);
 reg  [1:0] r_vbl_s, r_go_s, r_line_s;
 reg        r_vbl_d, r_go_d, r_line_d;
 reg  [8:0] r_vcnt_a, r_vcnt_b;
-reg  [7:0] r_banks_a, r_banks_b;   // descriptor bank count, quasi-static, into clk_ram
+reg  [7:0] r_banks_a, r_banks_b;   // descriptor bank counts, quasi-static, into clk_ram
+reg  [7:0] r_bbanks_a, r_bbanks_b;
 reg        line_start_lvl;
 always @(posedge clk_sys) if (line_start) line_start_lvl <= 1'b1; else if (ce_pix && hcnt == 9'd200) line_start_lvl <= 1'b0;
 always @(posedge clk_ram) begin
@@ -502,6 +505,7 @@ always @(posedge clk_ram) begin
     r_line_s <= {r_line_s[0], line_start_lvl};
     r_vcnt_a <= vcnt; r_vcnt_b <= r_vcnt_a;
     r_banks_a <= board_desc.yspr_banks; r_banks_b <= r_banks_a;
+    r_bbanks_a <= board_desc.bspr_banks; r_bbanks_b <= r_bbanks_a;
     r_vbl_d <= r_vbl_s[1]; r_go_d <= r_go_s[1]; r_line_d <= r_line_s[1];
 end
 wire r_vbl_start  = r_vbl_s[1] & ~r_vbl_d;
@@ -544,6 +548,20 @@ yb_rotate_5306 rotate (
     .rd_clk(clk_sys), .rd_line_start(line_start && vcnt <= 9'd223), .rd_x(hcnt), .rd_idx(rot_idx), .rd_pri(rot_pri),
     .miss_count(rot_miss), .line_clocks(rot_clocks), .late_count(rot_late)
 );
+// 315-5196 16B sprites: the list is snapshotted at line 226 (sub Y rewrites
+// it from the IRQ2 handler, lines 170-182) and each line is built one line
+// ahead into its own line buffer
+wire [15:0] bspr_pix;
+wire [12:0] bspr_clocks; wire [15:0] bspr_late;
+yb_bsprite_5196 bsprites (
+    .clk(clk_ram), .reset(reset), .num_banks(r_bbanks_b),
+    .snap(r_go), .line_start(r_line_start), .vcnt(r_vcnt_b),
+    .sram_addr(bspr_rd_addr), .sram_q(bspr_rd_q),
+    .rom_req(p4_req), .rom_addr(p4_addr), .rom_dout(p4_dout), .rom_ack(p4_ack),
+    .rd_clk(clk_sys), .rd_line_start(line_start && vcnt <= 9'd223), .rd_x(hcnt), .rd_pix(bspr_pix),
+    .line_clocks(bspr_clocks), .late_count(bspr_late)
+);
+assign p4_urgent = 1'b0;
 yb_fb_if #(.FB_BASE(32'h3000_0000)) fb (
     .clk(clk_ram), .rst(reset), .hires(1'b0),
     .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
@@ -557,31 +575,37 @@ yb_fb_if #(.FB_BASE(32'h3000_0000)) fb (
     .rd_x(10'd0), .rd_pix(fbr_pix), .rd_pub_ok(1'b1)
 );
 
-// ================================================================ video (M3)
-// Y layer only: the 315-5306 line buffer gives the palette index and the
-// priority of screen pixel hcnt. The pipeline is line buffer read (two
-// clocks after ce_out, the address is hcnt), palette (2 clocks): the RGB of
-// pixel hcnt is ready before the next pixel enable, when the framework
-// samples it together with the blanking of the same pixel, so blanking and
-// sync are not delayed. The 16B layer and the 315-5312 mixer arrive in M4.
+// ================================================================ video (M4)
+// 315-5312 mixer (MAME segaybd_v.cpp screen_update): the rotated Y layer is
+// the base (palette index, priority); a 16B pixel wins when its priority
+// nibble, shifted, is below the Y priority's low five bits, and then either
+// shadows the Y pixel (pen E: the palette's effects copy) or replaces it
+// with 0x800 | pixel[10:0]. Both line buffers are read at hcnt (two clocks
+// after ce_out), then the palette (2 clocks): the RGB of pixel hcnt is ready
+// before the next pixel enable, when the framework samples it with the
+// blanking of the same pixel, so blanking and sync are not delayed.
 reg        ce_pix_d1, ce_pix_d2;
 reg [12:0] pal_idx;
-reg  [7:0] y_pri;
+reg        pal_eff;
+wire       b_win    = (bspr_pix != 16'hFFFF) && ({bspr_pix[15:12], 1'b0} < rot_pri[4:0]);
+wire       b_shadow = b_win && (bspr_pix[3:0] == 4'hE);
 always @(posedge clk_sys) begin
     ce_pix_d1 <= ce_out; ce_pix_d2 <= ce_pix_d1;
-    if (ce_pix_d2) begin pal_idx <= rot_idx; y_pri <= rot_pri; end
+    if (ce_pix_d2) begin
+        pal_idx <= (b_win && !b_shadow) ? {2'b01, bspr_pix[10:0]} : rot_idx;
+        pal_eff <= b_shadow;
+    end
 end
 wire [7:0] pal_r, pal_g, pal_b;
 yb_palette_5242 palette (.clk(clk_sys), .a_addr(ya[13:1]), .a_din(y_dout), .a_be(y_be),
     .a_we(y_valid && y_wr && y_sel_pal && y_start), .a_dout(pal_q),
-    .b_addr(pal_idx), .b_effects(1'b0), .r(pal_r), .g(pal_g), .b(pal_b));
+    .b_addr(pal_idx), .b_effects(pal_eff), .r(pal_r), .g(pal_g), .b(pal_b));
 assign hb = ohblank; assign vb = vblank; assign hs = ohsync; assign vs = vsync;
 assign r = (ohblank | vblank | !display_enable) ? 8'd0 : pal_r;
 assign g = (ohblank | vblank | !display_enable) ? 8'd0 : pal_g;
 assign b = (ohblank | vblank | !display_enable) ? 8'd0 : pal_b;
 
 // ---------------------------------------------------------------- tie-offs
-assign p4_req = 1'b0; assign p4_addr = '0; assign p4_urgent = 1'b0;
 assign p5_req = 1'b0; assign p5_addr = '0;
 assign p6_req = 1'b0; assign p6_addr = '0;
 assign p7_req = 1'b0; assign p7_addr = '0;

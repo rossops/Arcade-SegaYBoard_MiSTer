@@ -7,10 +7,10 @@ whole frames against MAME captures before anything goes near the FPGA.
 
 ## Status
 
-The reusable half of the X Board core is in place (CPUs, ROM caches, math
-chips, sound board, SDRAM and DDR3 interfaces, palette, timing, tooling, CI)
-and the scaffold is trimmed to the Y Board's memory map, ROM stream and
-descriptor. The core itself is still a stub: no Y Board chips yet. `docs/DESIGN.md` has the hardware
+Galaxy Force II's attract mode runs with the full video path: the three
+68000s, the 315-5305 Y sprites into DDR3, the 315-5306 rotation, the
+315-5196 front sprites and the 315-5312 mixer, pixel-exact against MAME's
+screenshots. No sound yet, and no game other than Galaxy Force II. `docs/DESIGN.md` has the hardware
 reference, the architecture and the open questions; `docs/references.md`
 says where every file came from.
 
@@ -20,7 +20,7 @@ says where every file came from.
 | M1 | Three 68000s, shared RAM, math chips, 315-5296, MSM6253, interrupts | done 2026-08-27, 415/553 M10K, traces 99.7% vs MAME, boots on hardware |
 | M2 | 315-5305 Y sprites into DDR3, palette, indirection | done 2026-08-28, 423/553 M10K, model exact on 20 lists, Y layer on hardware |
 | M3 | 315-5306 rotation scan-out | done 2026-08-28, 423/553 M10K, exact on 20 parameter sets, rotates on hardware |
-| M4 | 315-5196 16B sprites and the 315-5312 mixer | |
+| M4 | 315-5196 16B sprites and the 315-5312 mixer | done 2026-08-28, 429/553 M10K, frames pixel-exact vs MAME, attract complete on hardware |
 | M5 | Sound | |
 | M6 | Hardware bring-up, timing, NVRAM, DIPs, controls | |
 | M7 | Power Drift, G-LOC, Strike Fighter, Rail Chase, R360 | |

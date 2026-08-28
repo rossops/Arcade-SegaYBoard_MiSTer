@@ -11,6 +11,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/yb_fb_if.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/yb_palette_5242.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/yb_ysprite_5305.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/yb_rotate_5306.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/yb_bsprite_5196.sv
 # Y Board video still to write: 315-5305 sprite generator + 315-5306 rotation, the
 # 16B sprite layer, the mixer. There is no tilemap and no road on this board.
 

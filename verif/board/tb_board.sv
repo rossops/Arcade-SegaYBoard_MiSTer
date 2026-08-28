@@ -154,35 +154,41 @@ end
 // ---- +trace_vid: when sub Y swaps the rotation RAM and where sub X writes the
 // sprite list (first/last line with writes per frame), to place the render
 reg trace_vid; initial trace_vid = $test$plusargs("trace_vid");
-integer ys_first = -1, ys_last = -1, ys_n = 0;
+integer ys_first = -1, ys_last = -1, ys_n = 0, bs_first = -1, bs_last = -1, bs_n = 0;
 reg vb_tv_d;
 always @(posedge clk_sys) begin
     vb_tv_d <= vb;
     if (trace_vid && core.y_cs && core.y_rd && core.y_sel_rotc) $display("ROTSWAP f=%0d line=%0d", frame, core.vcnt);
+    if (trace_vid && core.y_start && core.y_wr && core.y_sel_bspr) begin
+        if (bs_first < 0) bs_first = core.vcnt; bs_last = core.vcnt; bs_n = bs_n + 1;
+        if (bs_n < 3) $display("BSPRW f=%0d line=%0d a=%04x d=%04x", frame, core.vcnt, {core.ya[11:1], 1'b0}, core.y_dout);
+    end
     if (trace_vid && core.x_start && core.x_wr && core.x_sel_yspr) begin
         if (ys_first < 0) ys_first = core.vcnt; ys_last = core.vcnt; ys_n = ys_n + 1;
         if (ys_n < 4 || core.vcnt == 9'd223) $display("YSPRW f=%0d line=%0d a=%05x d=%04x", frame, core.vcnt, {core.xa[15:1], 1'b0}, core.x_dout);
     end
     if (trace_vid && vb && !vb_tv_d) begin
         $display("YSPR-WRITES f=%0d n=%0d first_line=%0d last_line=%0d", frame, ys_n, ys_first, ys_last);
-        ys_first = -1; ys_last = -1; ys_n = 0;
+        $display("BSPR-WRITES f=%0d n=%0d first_line=%0d last_line=%0d", frame, bs_n, bs_first, bs_last);
+        ys_first = -1; ys_last = -1; ys_n = 0; bs_first = -1; bs_last = -1; bs_n = 0;
     end
 end
 
 // ---- 315-5306 scan-out statistics: worst DDR3 misses and clocks per line in
 // each frame, and lines that were not ready at their deadline (cumulative)
-integer rot_miss_max = 0, rot_clk_max = 0;
+integer rot_miss_max = 0, rot_clk_max = 0, bs_clk_max = 0;
 reg vb_rot_d;
 always @(posedge clk_ram) begin
     if (core.rotate.st == 5 || (core.rotate.st == 0 && !core.rotate.building)) begin
         if (core.rotate.miss_count > rot_miss_max) rot_miss_max = core.rotate.miss_count;
         if (core.rotate.line_clocks > rot_clk_max) rot_clk_max = core.rotate.line_clocks;
     end
+    if (!core.bsprites.building && core.bsprites.line_clocks > bs_clk_max) bs_clk_max = core.bsprites.line_clocks;
 end
 always @(posedge clk_sys) begin
     if (vb && !vb_rot_d && frame != 0 && (frame % 20 == 0 || frame == dumpframe + 1))
-        $display("SCANOUT f=%0d worst misses/line=%0d worst clocks/line=%0d late lines so far=%0d", frame, rot_miss_max, rot_clk_max, core.rotate.late_count);
-    if (vb && !vb_rot_d) begin rot_miss_max = 0; rot_clk_max = 0; end
+        $display("SCANOUT f=%0d worst misses/line=%0d worst clocks/line=%0d late lines so far=%0d; 16B worst clocks/line=%0d late=%0d", frame, rot_miss_max, rot_clk_max, core.rotate.late_count, bs_clk_max, core.bsprites.late_count);
+    if (vb && !vb_rot_d) begin rot_miss_max = 0; rot_clk_max = 0; bs_clk_max = 0; end
     vb_rot_d <= vb;
 end
 
@@ -199,6 +205,7 @@ task automatic dump_ram(input string name, input integer words, input integer wh
         case (which)
             0: $fwrite(fd, "%c%c", core.yspriteram.mem[k][7:0], core.yspriteram.mem[k][15:8]);
             1: $fwrite(fd, "%c%c", core.rotateram.mem[{~core.rot_bank, k[9:0]}][7:0], core.rotateram.mem[{~core.rot_bank, k[9:0]}][15:8]);
+            3: $fwrite(fd, "%c%c", core.bspriteram.mem[k][7:0], core.bspriteram.mem[k][15:8]);
             default: $fwrite(fd, "%c%c", core.palette.mem[k][7:0], core.palette.mem[k][15:8]);
         endcase
     end
@@ -209,6 +216,7 @@ always @(posedge clk_sys) begin
         if (frame == dumpframe) begin
             dump_ram("rtl_yspriteram.bin", 32768, 0);
             dump_ram("rtl_rotbuf.bin", 1024, 1);
+            dump_ram("rtl_bspriteram.bin", 2048, 3);
             $display("dumped sprite RAM and rotation buffer at frame %0d line 226", frame);
         end
         if (frame == dumpframe + 1) begin

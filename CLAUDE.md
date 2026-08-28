@@ -26,8 +26,12 @@ convention below, and its git history shows what each decision cost.
   `tools/board_check.py`, gate `verif/board/check_m2.sh`. M3 (branch
   `m3-rotation`) added `rtl/video/yb_rotate_5306.sv` (affine scan-out with
   a 128-word DDR3 cache, `verif/unit/rotate/` harness, `verif/models/
-  rotate5306.py`, gate `verif/board/check_m3.sh`). Not written yet: the
-  16B sprite layer and mixer (M4), the sound board wiring (M5), the analog modes for
+  rotate5306.py`, gate `verif/board/check_m3.sh`). M4 (branch `m4-bsprites`)
+  added `rtl/video/yb_bsprite_5196.sv` (line-based, private list copy) and
+  the 315-5312 mixer in `yb_core`; models `bsprite5196.py`, `mixer5312.py`;
+  `tools/frame_check.py` (models vs MAME screenshots), `tools/frame_diff.py`
+  (RTL vs MAME screenshots), harness `verif/unit/bsprite/`, gate
+  `verif/board/check_m4.sh`. Not written yet: the sound board wiring (M5), the analog modes for
   the games other than Galaxy Force II (M7).
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the

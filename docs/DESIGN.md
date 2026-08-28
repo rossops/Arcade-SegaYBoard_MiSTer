@@ -96,7 +96,7 @@ Sub Y:
 | 080000 / 084000 | its own 5248 / 5249 |
 | 0C0000-0CFFFF | shared RAM |
 | 180000-1807FF (mirror 7800) | rotation RAM, 2 KB |
-| 188000-188FFF (mirror 7000) | 16B sprite RAM, 4 KB |
+| 188000-188FFF (mirror 7000) | 16B sprite RAM, 4 KB (256 entries of 8 words) |
 | 190000-193FFF (mirror 4000) | palette RAM, 8192 x 16 |
 | 198000-19FFFF | rotation control: a read swaps the two halves of rotation RAM, returns FFFF |
 | 1F0000-1FFFFF | local RAM 64 KB |
@@ -209,7 +209,7 @@ index `sy` (the source row number: the "scanline colour", used for sky and
 ground gradients) with priority FF. The 27 is MAME's; open question 5.
 
 ### 315-5196 16B sprites (front layer)
-System 16B format, 8 words per entry, 128 entries in 4 KB:
+System 16B format, 8 words per entry, 256 entries in 4 KB:
 w0 bottom-1 (15:8), top-1 (7:0); w1 X 8:0 (0xBD = screen 0; MAME's origin is
 184 for this device), 12:9 sprite-vs-sprite priority (Y Board use); w2 bit 15
 end, 14 hide, 8 flip, 7:0 signed pitch; w3 ROM offset (16-bit words); w4
@@ -486,6 +486,44 @@ was the pipeline's, not the chip's. The DDR3 read budget is as predicted by
 the Python cache simulation, so the layout question stays open until a
 game rolls.
 
+M4 findings (gforce2). Sub Y rewrites the whole 16B list every frame from
+the IRQ2 handler, lines 170 to 182 (96 entries), so the snapshot the
+renderer takes at line 226, the Y render's trigger, always sees a finished
+list. The 315-5196 keeps its per-sprite state in the list (word 5 bits
+15:10 accumulate the vertical zoom, word 7 is the row address), which is
+why `yb_bsprite_5196` works on a private copy rather than the CPU's RAM:
+the copy is stepped line by line exactly as MAME's frame loop steps it,
+and the CPU never sees the chip's writes (whether the real chip writes
+them back is open question 10). The model chain reproduces MAME's own
+screenshots pixel for pixel on the 19 still captures; the three rotating
+captures differ because a capture pairs RAMs dumped at frame end with a
+picture drawn mid-frame (the Y list at frame end already belongs to the
+next frame). The rotation buffer MAME draws with is the RAM as the 198000
+read tap sees it, `rotateram_swap.bin`, which `tools/frame_check.py`
+prefers.
+
+M4 findings (gforce2). Sub Y rewrites the whole 16B list every frame from
+the IRQ2 handler, lines 170 to 182 (96 entries), so the snapshot the
+renderer takes at line 226, the Y render's trigger, always sees a finished
+list. The 315-5196 keeps its per-sprite state in the list (word 5 bits
+15:10 accumulate the vertical zoom, word 7 is the row address), which is
+why `yb_bsprite_5196` works on a private copy rather than the CPU's RAM:
+the copy is stepped line by line exactly as MAME's frame loop steps it,
+and the CPU never sees the chip's writes (whether the real chip writes
+them back is open question 10). The model chain reproduces MAME's own
+screenshots pixel for pixel on the 19 still captures; the three rotating
+captures differ because a capture pairs RAMs dumped at frame end with a
+picture drawn mid-frame (the Y list at frame end already belongs to the
+next frame). The rotation buffer MAME draws with is the RAM as the 198000
+read tap sees it, `rotateram_swap.bin`, which `tools/frame_check.py`
+prefers. The 16B renderer is exact against its model on all 22 captured
+lists, worst line 2,164 clocks of 6,400. The board's own frames are
+pixel-exact against MAME's screenshots at frames 60, 150 and 300 (RTL
+frames 61, 151 and 296: the two count from different resets), which is
+the first time the whole video path is compared with MAME rather than
+with the models; MAME's `+27` and 184 origins and the pipeline's
+alignment agree with it to the pixel.
+
 M0 in full, since it is next. Rewrite `rtl/yb_pkg.sv` from the tables in
 section 3 (clocks, SDRAM and DDR3 map, stream offsets, `board_desc_t`). Trim
 `Arcade-SegaYBoard.sv` to a `yb_core` stub whose port list is the Y Board's
@@ -505,8 +543,9 @@ compile of the stub for the M10K baseline and a clean STA.
 2. IRQ2 scanline: MAME's 170 is a tuned constant; the real source is the 315-5306. Descriptor byte 7, so it can be tuned per game without a rebuild, and MAME's Q/W/E/R hotkeys give a reference value per game from captures.
 3. Sound crystal: 32.2159 MHz / 8 (MAME) or 16 MHz / 4 (PCB notes). Pitch differs by 0.7%; go with the PCB notes' 4.000 MHz unless a recording says otherwise.
 4. Y framebuffer cadence. What Galaxy Force II does (bench `+trace_vid`): sub Y reads 198000 (the rotation swap) at line 223 every other frame, from the IRQ4 handler; sub X writes word 7 of sprite entry 0 at line 223 of every frame, cycling the list head through four lists at entries 0x600, 0x880, 0xB00 and 0xD80, and fills the lists that are not linked in during the following frame (from line 233). So the list the renderer walks is never being written. M2 therefore renders every frame from the live sprite RAM starting at line 226, erases the whole back buffer first (MAME's full FFFF fill), and swaps at the next vblank; the scan-out translation is latched with the render. What the real chips do between the swap read and the vblank is still unknown, and so is whether they render continuously; the visible result would be the same for this game.
-5. The `+27` X offset in the rotation and the 16B origin of 184: MAME calibrations, check against captures.
+5. The `+27` X offset in the rotation and the 16B origin of 184: MAME calibrations. M4's full frames match MAME's screenshots to the pixel with both, so the core is faithful to MAME; whether MAME is faithful to the board is a question for a real PCB.
 6. Shared RAM arbitration between three CPUs (PALs 315-5314..5318): wait-state behaviour unknown; time-slicing is the model.
 7. 16B sprite zoom clamp: MAME clamps hzoom and vzoom to a minimum of 0x40 ("maximum of 8x, not 100% confirmed"); MacDonald's System 16 notes give the valid range as 0..0x3FF with odd behaviour above. Same parameter as the X Board, MAME's value by default. The Y sprite generator only has the zoom 0 to 1 clamp, which is MAME's guard and not a hardware claim.
 8. MSM6253 timing: the conversion clock is the 315-5296's CKOT output, whose divider is in the CNT register MAME does not emulate, so the delay from the channel write to a valid first read is unknown; MAME makes it instant. Also whether the shift register reloads only on the write. Log the CNT writes in M1 and pick the divider from them.
 9. Deluxe cabinets: what the motor board answers on port C and the ADC once a game starts driving it. MAME never runs the motor Z80, so the stub returns inactive limit switches and centred pitch and roll; if a deluxe set refuses to start on that, the answer is in its motor ROM.
+10. 315-5196 write-back: MAME writes the zoom accumulator and row address into sprite RAM words 5 and 7 as it draws. The core keeps them in a private copy, so a game that reads them back would see the CPU's values; no known game does.

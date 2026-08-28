@@ -1,64 +1,47 @@
 #!/usr/bin/env python3
-"""Compare an RTL frame (PPM) with a MAME screenshot (PNG).
+"""Compare the RTL's frames with a MAME screenshot.
 
-    frame_diff.py rtl.ppm mame.png [--dump DIR] [--out diff.png]
+    frame_diff.py verif/board/out verif/golden/gforce2/f300 [--window 4] [--diff out.png]
 
-With --dump (a mame_capture directory) the comparison is restricted to
-pixels the Python tilemap model marks as tile-opaque, so sprite and road
-areas (not implemented yet) do not count. Prints match statistics and
-writes a diff image (red = mismatch).
+MAME's frame N (the capture's frame.txt) and the RTL's frame N are not the
+same frame: the two count from different resets and the RTL shows a render
+one frame after MAME does. The RTL frames N-window..N+window are compared
+and the best one reported; exact agreement on a still scene is the M4
+criterion, and the offset that gives it is printed.
 """
-import argparse, os, sys, zipfile
+import os, sys
 from PIL import Image
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "verif"))
 
-
-def tile_mask(dumpdir, zippath):
-    from models import tilemap16b as tm
-    def lw(p):
-        b = open(p, "rb").read(); return [b[i] | (b[i + 1] << 8) for i in range(0, len(b), 2)]
-    tileram, textram = lw(os.path.join(dumpdir, "tileram.bin")), lw(os.path.join(dumpdir, "textram.bin"))
-    zf = zipfile.ZipFile(zippath)
-    planes = [zf.read("epr-11115.154"), zf.read("epr-11114.153"), zf.read("epr-11113.152")]
-    regs = tm.latch_regs(textram)
-    fg = tm.render_layer(0, tileram, textram, planes, regs)
-    bg = tm.render_layer(1, tileram, textram, planes, regs)
-    tx = tm.render_text(textram, planes)
-    _, mark = tm.mix(fg, bg, tx)
-    return mark
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("rtl"); ap.add_argument("mame")
-    ap.add_argument("--dump")
-    ap.add_argument("--zip", default="/Volumes/roms/Arcade/MAME 0.289 ROMs (merged)/aburner2.zip")
-    ap.add_argument("--out")
-    ap.add_argument("--tol", type=int, default=0)
-    a = ap.parse_args()
-    rtl = Image.open(a.rtl).convert("RGB"); mame = Image.open(a.mame).convert("RGB")
-    assert rtl.size == mame.size == (320, 224), (rtl.size, mame.size)
-    mask = tile_mask(a.dump, a.zip) if a.dump else None
-    diff = Image.new("RGB", (320, 224))
-    total = ok = 0
-    first = None
-    for y in range(224):
-        for x in range(320):
-            if mask is not None and not mask[y][x]:
-                diff.putpixel((x, y), (0, 0, 40)); continue
-            p, q = rtl.getpixel((x, y)), mame.getpixel((x, y))
-            total += 1
-            if all(abs(p[i] - q[i]) <= a.tol for i in range(3)):
-                ok += 1; diff.putpixel((x, y), tuple(v // 2 for v in q))
-            else:
-                diff.putpixel((x, y), (255, 0, 0))
-                if first is None: first = (x, y, p, q)
-    print(f"compared {total} pixels: {ok} match ({100.0*ok/max(1,total):.2f}%)")
-    if first: print("first mismatch at", first)
-    if a.out: diff.save(a.out)
-    return 0 if ok == total else 1
+def main(outdir, capdir, window=4, diff=None):
+    mame = Image.open(os.path.join(capdir, "frame.png")).convert("RGB")
+    n = int(open(os.path.join(capdir, "frame.txt")).read().split()[0])
+    best = None
+    for f in range(max(0, n - window), n + window + 1):
+        p = os.path.join(outdir, f"frame_{f:04d}.ppm")
+        if not os.path.exists(p):
+            continue
+        rtl = Image.open(p).convert("RGB")
+        ok = sum(1 for y in range(224) for x in range(320) if rtl.getpixel((x, y)) == mame.getpixel((x, y)))
+        if best is None or ok > best[0]:
+            best = (ok, f, rtl)
+    if best is None:
+        print(f"{capdir}: no RTL frames around {n} in {outdir}"); return 1
+    ok, f, rtl = best
+    first = next(((x, y, rtl.getpixel((x, y)), mame.getpixel((x, y))) for y in range(224) for x in range(320)
+                  if rtl.getpixel((x, y)) != mame.getpixel((x, y))), None)
+    print(f"{capdir}: MAME frame {n} vs RTL frame {f} (offset {f - n:+d}): {ok}/{320*224} pixels equal; first difference {first}")
+    if diff:
+        d = Image.new("RGB", (320, 224))
+        for y in range(224):
+            for x in range(320):
+                d.putpixel((x, y), (255, 0, 0) if rtl.getpixel((x, y)) != mame.getpixel((x, y)) else tuple(c // 3 for c in mame.getpixel((x, y))))
+        d.save(diff)
+    return 0 if ok == 320 * 224 else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    window = int(sys.argv[sys.argv.index("--window") + 1]) if "--window" in sys.argv else 4
+    diff = sys.argv[sys.argv.index("--diff") + 1] if "--diff" in sys.argv else None
+    raise SystemExit(main(args[0], args[1], window, diff))
