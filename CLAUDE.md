@@ -31,7 +31,10 @@ convention below, and its git history shows what each decision cost.
   the 315-5312 mixer in `yb_core`; models `bsprite5196.py`, `mixer5312.py`;
   `tools/frame_check.py` (models vs MAME screenshots), `tools/frame_diff.py`
   (RTL vs MAME screenshots), harness `verif/unit/bsprite/`, gate
-  `verif/board/check_m4.sh`. Not written yet: the sound board wiring (M5), the analog modes for
+  `verif/board/check_m4.sh`. M5 (branch `m5-sound`) wired `yb_soundsys`
+  (Z80, YM2151, 315-5218 with the Y Board banking: shift 13, mask F8) to
+  the latch NMI, `/SRES` and `/MUTE`; gate `verif/board/check_m5.sh` (PCM
+  vs `segapcm.py`, WAV envelope vs MAME's `mame_coin30.wav`). Not written yet: the sound board wiring (M5), the analog modes for
   the games other than Galaxy Force II (M7).
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the

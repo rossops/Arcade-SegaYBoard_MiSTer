@@ -1,9 +1,11 @@
 //============================================================================
-//  Sega 315-5218 PCM (SegaPCM), MAME segapcm.cpp with BANK_512 (bankshift
-//  12, bankmask 0x70). 16 channels, register RAM at 8*ch:
+//  Sega 315-5218 PCM (SegaPCM), MAME segapcm.cpp. The Y Board configures
+//  BANK_12M | BANK_MASKF8: bank shift 13 and bank mask 0xF8 (register 0x86
+//  bits 7:3 in 64 KB units, the whole 2 MB region); the X Board was shift
+//  12 with mask 0x70. 16 channels, register RAM at 8*ch:
 //    0x02 vol L, 0x03 vol R, 0x04/0x05 loop (bits 15:8 / 23:16), 0x06 end
 //    (compared with addr[23:16] + 1), 0x07 delta, 0x84/0x85 current address
-//    (bits 15:8 / 23:16), 0x86 flags: bit0 stop, bit1 no loop, 6:4 bank.
+//    (bits 15:8 / 23:16), 0x86 flags: bit0 stop, bit1 no loop, 7:3 bank.
 //  Every 128 chip clocks (31.25 kHz) each active channel advances by delta
 //  (8.8 fixed point in addr[15:0]), fetches ROM byte offset + addr[23:8],
 //  and adds (byte - 0x80) * vol to the left/right sums. The sums are in
@@ -14,12 +16,13 @@
 import yb_pkg::*;
 
 module yb_segapcm_5218 #(
-    parameter [24:0] PCM_BASE = SDR_PCM_BASE
+    parameter [24:0] PCM_BASE  = SDR_PCM_BASE,
+    parameter        BANKSHIFT = 13            // MAME m_bankshift (Y Board 13, X Board 12)
 ) (
     input             clk,          // clk_sys
     input             reset,
     input             tick,         // one pulse per 128 chip clocks (31.25 kHz)
-    input       [7:0] bankmask,     // descriptor: 0x70 for aburner2
+    input       [7:0] bankmask,     // descriptor: 0xF8 on the Y Board
 
     // Z80 register access (F000-F0FF)
     input             cs,
@@ -53,7 +56,7 @@ reg  [3:0] ch;
 reg [23:0] a;
 reg [23:0] loop;
 reg  [7:0] endb, delta, volr, voll, flags;
-reg  [6:0] bank;
+reg  [7:0] bank;
 reg        rom_odd;
 reg signed [19:0] sum_l, sum_r;
 
@@ -74,7 +77,7 @@ always @(posedge clk) begin
         E_IDLE: if (tick) begin ch <= 4'd0; sum_l <= 0; sum_r <= 0; es <= E_LOAD; end
         E_LOAD: begin
             flags <= regs[{1'b1, ch, 3'd6}];
-            bank  <= regs[{1'b1, ch, 3'd6}][6:0] & bankmask[6:0];
+            bank  <= regs[{1'b1, ch, 3'd6}] & bankmask;
             a     <= {regs[{1'b1, ch, 3'd5}], regs[{1'b1, ch, 3'd4}], low[ch]};
             loop  <= {regs[{1'b0, ch, 3'd5}], regs[{1'b0, ch, 3'd4}], 8'd0};
             endb  <= regs[{1'b0, ch, 3'd6}] + 8'd1;
@@ -96,10 +99,9 @@ always @(posedge clk) begin
             else es <= E_FETCH;
         end
         E_FETCH: begin
-            // byte address: (bank << 12) + addr[23:8]; bank field in bits 6:4 -> <<12 gives 64 KB units
+            // byte address: ((flags & bankmask) << BANKSHIFT) + addr[23:8]
             logic [24:0] ba;
-            // offset = (flags & bankmask) << 12; bank bits 6:4 -> 64 KB units
-            ba = PCM_BASE + {6'd0, bank, 12'd0} + {9'd0, a[23:8]};
+            ba = PCM_BASE + (25'(bank) << BANKSHIFT) + {9'd0, a[23:8]};
             rom_addr <= ba[24:1];
             rom_odd  <= ba[0];
             rom_req  <= 1'b1;

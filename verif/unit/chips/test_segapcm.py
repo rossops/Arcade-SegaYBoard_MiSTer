@@ -1,6 +1,8 @@
 """315-5218: per-tick output must equal MAME's model (Python port) with a
 random ROM and random channel programming including loop/end/stop
-semantics and bank bits. After Burner's engine/voice samples live here."""
+semantics and bank bits (Y Board: bits 7:3 in 64 KB units, mask F8, shift
+13; the test ROM is 64 KB so banks 0..7 of 8 KB stay inside it). Galaxy
+Force's voices and engine samples live here."""
 import random, sys, os
 import cocotb
 from cocotb.clock import Clock
@@ -42,7 +44,7 @@ async def z80_write(dut, addr, data):
 async def random_channels(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
     for s in ("tick", "cs", "we", "addr", "din", "rom_ack", "rom_dout"): getattr(dut, s).value = 0
-    dut.bankmask.value = 0x70
+    dut.bankmask.value = 0xF8
     dut.reset.value = 1
     for _ in range(3): await RisingEdge(dut.clk)
     dut.reset.value = 0
@@ -59,7 +61,7 @@ async def random_channels(dut):
                 0x04: rng.randrange(256), 0x05: rng.randrange(1),          # loop within the 64 KB ROM
                 0x06: rng.randrange(1, 4), 0x07: rng.choice([0x40, 0x80, 0x100 - 1, rng.randrange(256)]),
                 0x84: rng.randrange(256), 0x85: rng.randrange(1),
-                0x86: rng.choice([0x00, 0x02, 0x00, 0x10, 0x01]),
+                0x86: rng.choice([0x00, 0x02, 0x00, 0x08, 0x18, 0x38, 0x01]),
             }
             for off, val in prog.items():
                 m.write(8 * ch + off, val)

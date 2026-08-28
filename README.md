@@ -10,7 +10,9 @@ whole frames against MAME captures before anything goes near the FPGA.
 Galaxy Force II's attract mode runs with the full video path: the three
 68000s, the 315-5305 Y sprites into DDR3, the 315-5306 rotation, the
 315-5196 front sprites and the 315-5312 mixer, pixel-exact against MAME's
-screenshots. No sound yet, and no game other than Galaxy Force II. `docs/DESIGN.md` has the hardware
+screenshots, with the Z80 sound board (YM2151 and 315-5218) playing. No
+game other than Galaxy Force II yet, and the controls, NVRAM and OSD are
+still the scaffold's (M6). `docs/DESIGN.md` has the hardware
 reference, the architecture and the open questions; `docs/references.md`
 says where every file came from.
 
@@ -21,7 +23,7 @@ says where every file came from.
 | M2 | 315-5305 Y sprites into DDR3, palette, indirection | done 2026-08-28, 423/553 M10K, model exact on 20 lists, Y layer on hardware |
 | M3 | 315-5306 rotation scan-out | done 2026-08-28, 423/553 M10K, exact on 20 parameter sets, rotates on hardware |
 | M4 | 315-5196 16B sprites and the 315-5312 mixer | done 2026-08-28, 429/553 M10K, frames pixel-exact vs MAME, attract complete on hardware |
-| M5 | Sound | |
+| M5 | Sound | done 2026-08-28, 441/553 M10K, envelope 0.969 vs MAME, music and samples on hardware |
 | M6 | Hardware bring-up, timing, NVRAM, DIPs, controls | |
 | M7 | Power Drift, G-LOC, Strike Fighter, Rail Chase, R360 | |
 

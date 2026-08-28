@@ -1,10 +1,11 @@
-"""315-5218 SegaPCM, ported from MAME segapcm.cpp sound_stream_update with
-BANK_512 (bankshift 12, bankmask 0x70). One call to tick() produces one
-stereo sample (the chip runs at clock/128)."""
+"""315-5218 SegaPCM, ported from MAME segapcm.cpp sound_stream_update. The
+Y Board's configuration is BANK_12M | BANK_MASKF8: bank shift 13, mask 0xF8
+(the X Board was 12 and 0x70). One call to tick() produces one stereo
+sample (the chip runs at clock/128)."""
 
 
 class SegaPCM:
-    def __init__(self, rom, bankshift=12, bankmask=0x70):
+    def __init__(self, rom, bankshift=13, bankmask=0xF8):
         self.rom = rom                 # bytes; reads beyond the end return 0xFF
         self.ram = [0xFF] * 0x800
         self.low = [0] * 16

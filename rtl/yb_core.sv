@@ -6,8 +6,8 @@
 //  watchdog and the sound latch. The three CPUs share one 64 KB RAM through
 //  a one-access-per-clock arbiter. Video chips arrive in M2-M4: the display
 //  is the Y layer (315-5305 into DDR3, 315-5306 scan-out) under the 16B
-//  layer (315-5196) through the 315-5312 mixer and the palette; the Z80
-//  sound board comes in M5.
+//  layer (315-5196) through the 315-5312 mixer and the palette, and the
+//  Z80 sound board with the YM2151 and the 315-5218 (M5).
 //============================================================================
 import yb_pkg::*;
 
@@ -83,6 +83,28 @@ always @(posedge clk_sys) begin
     else phase <= phase + 2'd1;
 end
 wire ce_cpu = ~pause;
+
+// sound clocks: 4 MHz = 2 pulses per 25 clk_sys (12/13 spacing), 8 MHz = 4
+// pulses per 25 (for the simulation Z80 clock), jt51 cen_p1 = 2 MHz,
+// PCM tick = 4 MHz / 128. Open question 3: the PCB notes' 16 MHz / 4.
+reg [4:0] snd_div;
+reg       ce_z80, ce_z80x2, ce_fm_p1, pcm_tick;
+reg [6:0] pcm_div;
+always @(posedge clk_sys) begin
+    if (reset) begin snd_div <= 5'd0; ce_z80 <= 1'b0; ce_z80x2 <= 1'b0; ce_fm_p1 <= 1'b0; pcm_div <= 7'd0; pcm_tick <= 1'b0; end
+    else begin
+        // pause freezes the sound section with the CPUs (no hanging notes)
+        snd_div  <= (snd_div == 5'd24) ? 5'd0 : snd_div + 5'd1;
+        ce_z80   <= !pause && ((snd_div == 5'd0) || (snd_div == 5'd12));
+        ce_z80x2 <= !pause && ((snd_div == 5'd0) || (snd_div == 5'd6) || (snd_div == 5'd12) || (snd_div == 5'd18));
+        ce_fm_p1 <= !pause && (snd_div == 5'd0);
+        pcm_tick <= 1'b0;
+        if (!pause && (snd_div == 5'd0 || snd_div == 5'd12)) begin
+            if (pcm_div == 7'd127) begin pcm_div <= 7'd0; pcm_tick <= 1'b1; end
+            else pcm_div <= pcm_div + 7'd1;
+        end
+    end
+end
 
 // ---------------------------------------------------------------- timing
 wire       ce_pix, hblank, vblank, hsync, vsync, v0, line_start, vbl_irq, latch_pulse;
@@ -187,12 +209,16 @@ yb_math_5248 main_mult (.clk(clk_sys), .reset(cpu_reset), .cs(m_cs && m_sel_mult
 yb_math_5249 main_div (.clk(clk_sys), .reset(cpu_reset), .cs(m_cs && m_sel_div), .we(m_wr),
     .addr(ma[4:1]), .din(m_dout), .be(m_be), .dout(m_div_q), .rdy(m_div_rdy));
 
-// ---- sound latch (082001, odd byte): a write raises the Z80's NMI (M5)
+// ---- sound latch (082001, odd byte): MAME's generic latch with its
+// data-pending line on the Z80's NMI: a write raises it, the Z80's read
+// of port 40 clears it
 reg [7:0] snd_latch;
 reg       snd_nmi;
+wire      snd_read;
 always @(posedge clk_sys) begin
     if (cpu_reset) begin snd_latch <= 8'd0; snd_nmi <= 1'b0; end
     else if (m_cs && m_wr && m_sel_snd && m_be[0]) begin snd_latch <= m_dout[7:0]; snd_nmi <= 1'b1; end
+    else if (snd_read) snd_nmi <= 1'b0;
 end
 
 // ---- 315-5296 and the MSM6253 (low byte lane)
@@ -606,11 +632,19 @@ assign g = (ohblank | vblank | !display_enable) ? 8'd0 : pal_g;
 assign b = (ohblank | vblank | !display_enable) ? 8'd0 : pal_b;
 
 // ---------------------------------------------------------------- tie-offs
-assign p5_req = 1'b0; assign p5_addr = '0;
-assign p6_req = 1'b0; assign p6_addr = '0;
 assign p7_req = 1'b0; assign p7_addr = '0;
 
-assign audio_l = 16'sd0;
-assign audio_r = 16'sd0;
+// ---------------------------------------------------------------- sound
+// Z80, YM2151 and 315-5218 as on the X Board; /SRES from port E bit 4,
+// /MUTE from port H bit 7. ROM through SDRAM p5, samples through p6.
+yb_soundsys sound (
+    .clk(clk_sys), .reset(reset), .z80_reset_n(snd_reset_n),
+    .ce_z80(ce_z80), .ce_z80x2(ce_z80x2), .ce_fm(ce_z80), .ce_fm_p1(ce_fm_p1), .pcm_tick(pcm_tick),
+    .mute_n(mute_n), .pcm_bankmask(board_desc.pcm_bankmask),
+    .snd_latch(snd_latch), .snd_nmi(snd_nmi), .snd_read(snd_read),
+    .zrom_req(p5_req), .zrom_addr(p5_addr), .zrom_dout(p5_dout), .zrom_ack(p5_ack),
+    .pcm_req(p6_req), .pcm_addr(p6_addr), .pcm_dout(p6_dout), .pcm_ack(p6_ack),
+    .audio_l(audio_l), .audio_r(audio_r)
+);
 
 endmodule

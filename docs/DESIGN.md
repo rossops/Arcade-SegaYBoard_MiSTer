@@ -524,6 +524,21 @@ the first time the whole video path is compared with MAME rather than
 with the models; MAME's `+27` and 184 origins and the pipeline's
 alignment agree with it to the pixel.
 
+M5 findings (gforce2). The X Board's sound section fits the Y Board with
+two changes: the 315-5218 banking (shift 13, an 8-bit bank field under the
+descriptor's F8 mask; the engine's model and cocotb test now run that
+configuration, banks 0-7 of the 64 KB test ROM) and the mix. MAME routes
+the Y Board's PCM at 0.70 and its YM2151 at 0.30 of full scale, exactly
+twice the X Board's 0.35 and 0.15, which showed up as a bench recording at
+half MAME's level before the gains became parameters of `yb_soundsys`.
+With a coin at frame 30 the board's audio correlates with MAME's recording
+at 0.969 on the 5 ms envelope (threshold 0.95), 5 ms of lag, RMS 535
+against 514. The sound latch is MAME's generic latch: its data-pending
+line is the Z80's NMI, raised by the main CPU's write to 082001 and
+cleared by the Z80's read of port 40. The Z80 runs from the 4.000 MHz
+enables of open question 3; a 0.7% pitch difference against MAME's 4.027
+MHz is below what the envelope comparison can see.
+
 M0 in full, since it is next. Rewrite `rtl/yb_pkg.sv` from the tables in
 section 3 (clocks, SDRAM and DDR3 map, stream offsets, `board_desc_t`). Trim
 `Arcade-SegaYBoard.sv` to a `yb_core` stub whose port list is the Y Board's

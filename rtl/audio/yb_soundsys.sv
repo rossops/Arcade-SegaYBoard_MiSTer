@@ -1,10 +1,13 @@
 //============================================================================
-//  X Board sound section: Z80 (T80s) at 4 MHz, YM2151 (jt51), 315-5218 PCM.
+//  Sega sound section as on the X and Y Boards: Z80 (T80s) at 4 MHz, YM2151
+//  (jt51), 315-5218 PCM.
 //  Memory: 0000-EFFF ROM (SDRAM p5 through a 1 KB cache), F000-F0FF PCM
 //  registers (mirror 0x700), F800-FFFF RAM. Ports: 00-3F YM2151 (A0 = a0),
-//  40-7F sound latch from the 315-5250 (read clears the NMI).
-//  NMI = latch write, INT = YM2151, reset from I/O chip #1 port C bit 0.
-//  Mix: MAME routes PCM at 0.35 and the YM2151 at 0.15 of full scale.
+//  40-7F sound latch (read clears the NMI).
+//  NMI = latch write, INT = YM2151, reset from the I/O chip (/SRES).
+//  Mix: MAME routes the Y Board's PCM at 0.70 and its YM2151 at 0.30 of
+//  full scale (the X Board's were 0.35 and 0.15); the gains are parameters
+//  in 1/256.
 //  Simulation builds (no VHDL) use the tv80 core behind YB_Z80_TV80.
 //============================================================================
 import yb_pkg::*;
@@ -12,7 +15,9 @@ import yb_pkg::*;
 module yb_soundsys #(
     parameter HAS_YM   = 1,                  // 0: rear-speaker board (no YM2151)
     parameter [24:0] ROM_BASE = SDR_Z80_BASE,
-    parameter [24:0] PCM_BASE = SDR_PCM_BASE
+    parameter [24:0] PCM_BASE = SDR_PCM_BASE,
+    parameter        PCM_GAIN = 179,          // 0.70 * 256 (X Board: 90)
+    parameter        YM_GAIN  = 77            // 0.30 * 256 (X Board: 38)
 ) (
     input             clk,          // clk_sys
     input             reset,
@@ -145,9 +150,9 @@ always @* begin
     else if (sel_ram) z_din = ram_q;
 end
 
-// ---- mix: 0.35 * PCM + 0.15 * YM (90/256 and 38/256)
-wire signed [23:0] mix_l = pcm_l * 24'sd90 + ym_l * 24'sd38;
-wire signed [23:0] mix_r = pcm_r * 24'sd90 + ym_r * 24'sd38;
+// ---- mix: PCM_GAIN/256 * PCM + YM_GAIN/256 * YM
+wire signed [23:0] mix_l = pcm_l * 24'(PCM_GAIN) + ym_l * 24'(YM_GAIN);
+wire signed [23:0] mix_r = pcm_r * 24'(PCM_GAIN) + ym_r * 24'(YM_GAIN);
 assign audio_l = mute_n ? mix_l[23:8] : 16'sd0;
 assign audio_r = mute_n ? mix_r[23:8] : 16'sd0;
 endmodule
