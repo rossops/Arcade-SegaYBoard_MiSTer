@@ -293,12 +293,15 @@ blocks from the first fit. If it does not close, the 64 KB local RAMs are the
 candidates for SDRAM behind the ROM cache (they are not, on the X Board
 evidence, the fast path).
 
-Shared RAM: three masters on one 64 KB RAM. On the FPGA use one true dual
-port BRAM and time-slice it at `clk_ram` (a 68000 bus cycle is at least 32
-`clk_ram` clocks, so three requesters never contend for long); insert DTACK
-wait states only if a slot is missed. What the PALs 315-5314..5318 do on the
-real board is open question 6; the X Board's bus-grant model does not apply
-because no CPU owns another's space here.
+Shared RAM: three masters on one 64 KB RAM. M1 built it as one BRAM at
+`clk_sys` with a queue of one request per CPU: a CPU's bus-start pulse
+queues its access, the arbiter serves one queued access per clock (main,
+then sub X, then sub Y) and the requester gets its data and DTACK two clocks
+later. A 68000 bus cycle is at least 16 `clk_sys` clocks, so three
+contending CPUs cost each other at most two clocks and no wait state is ever
+inserted. What the PALs 315-5314..5318 do on the real board is open
+question 6; the X Board's bus-grant model does not apply because no CPU
+owns another's space here.
 
 DDR3: two 512x512x16 Y framebuffers at 0x30000000 and 0x30080000. Rendering
 writes runs (reuse `yb_fb_if`'s run writer, 512-pixel rows). Scan-out is the
@@ -423,6 +426,25 @@ by the user before any rbf is committed.
 | M5 | Sound wired (PCM mask F8, latch NMI, port H mute) | PCM exact vs `segapcm.py`; attract-mode WAV envelope correlation > 0.95 as on the X Board |
 | M6 | Hardware bring-up and timing closure, NVRAM, DIPs, controls, OSD | zero negative slack in the fit corner; 30 min attract without a watchdog reset; HDMI capture matches sim |
 | M7 | Power Drift (gear shift, motor stub), G-LOC, Strike Fighter (16 MB ROM slot), Rail Chase (gun modes from Line of Fire), R360 | each boots, passes its memory test, plays; MRAs and alternatives regenerated, `db.json.zip`, release |
+
+M1 findings (gforce2, 120 frames). All three CPUs track MAME's executed-PC
+trace at 99.7% or better with the X Board thresholds; the resyncs left are
+shared-RAM handshakes and polling loops. IRQ2 and IRQ4 are taken once per
+frame on main and sub Y in both runs, and the first entries land within a
+few dozen instructions of each other, which is the "same frame and line"
+criterion. Sub X's IRQ4 handler is a `tas` guard that returns inside the
+scanline while the level-4 line is still up, so the 68000 re-enters it six
+or seven times per line, in MAME and in the RTL alike; the count differs
+between the two (about 6.7 against 5.7 per frame) because the RTL's bus
+cycles carry DTACK latency that MAME's do not. Harmless, the guard makes the
+re-entries no-ops, but it is the first place the 342-versus-400 line length
+(open question 1) would show. The boot sequence confirms the port E wiring:
+the main CPU writes 0x4C to port E before making it an output, so both subs
+sit in reset (XRES, YRES high) until the main releases them, and MAME's
+trace shows the subs' first instructions only after that. On hardware the
+M1 build shows the gradient with short blanks: the game drops /KILL for
+about 12 frames at each attract-mode scene change (frames 269-281 in the
+bench), and kicks /WDCL every other frame, so the MB3773 never fires.
 
 M0 in full, since it is next. Rewrite `rtl/yb_pkg.sv` from the tables in
 section 3 (clocks, SDRAM and DDR3 map, stream offsets, `board_desc_t`). Trim

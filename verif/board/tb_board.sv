@@ -115,7 +115,6 @@ end
 // into Irc (xToIrc & enPhi2) comes from address eab; Ir <= Irc and
 // Ird <= Ir shift the matching address along, so at Ird load the queued
 // address is exactly the executing instruction's address.
-// M1 instantiates this once per CPU: `CPU_TRACE(mt, core.main_cpu.cpu, fmp) etc.
 `define CPU_TRACE(pfx, cpu, fh) \
 reg [23:1] pfx``_a_irc, pfx``_a_ir, pfx``_a_ird; \
 reg [23:1] pfx``_last; \
@@ -132,12 +131,24 @@ always @(posedge clk_sys) begin \
         end \
     end \
 end
+`CPU_TRACE(mt, core.main_cpu.cpu, fmp)
+`CPU_TRACE(xt, core.subx_cpu.cpu, fxp)
+`CPU_TRACE(yt, core.suby_cpu.cpu, fyp)
 always @(posedge clk_sys) begin
     if (!reset) begin
         if (tm_start && tm_fc[1]) $fwrite(fm, "%06x\n", {tm_addr, 1'b0});
         if (tx_start && tx_fc[1]) $fwrite(fx, "%06x\n", {tx_addr, 1'b0});
         if (ty_start && ty_fc[1]) $fwrite(fy, "%06x\n", {ty_addr, 1'b0});
     end
+end
+
+// ---- port E (display enable, resets, watchdog kick; the ADC mux bits are left out) and watchdog resets
+reg [7:0] pe_d;
+always @(posedge clk_sys) begin
+    pe_d <= core.pe_out;
+    if (core.pe_out[7:2] != pe_d[7:2]) $display("PORTE f=%0d line=%0d %02x (/KILL=%0d /WDCL=%0d /SRES=%0d XRES=%0d YRES=%0d)", frame, core.vcnt, core.pe_out,
+        core.pe_out[7], core.pe_out[5], core.pe_out[4], core.pe_out[3], core.pe_out[2]);
+    if (core.wd_reset) $display("WATCHDOG reset f=%0d", frame);
 end
 
 // ---- +dumpframe=N: RAM dumps at the start of that frame's vblank (M2 adds the RAMs)

@@ -12,10 +12,14 @@ convention below, and its git history shows what each decision cost.
   `Arcade-SegaYBoard.sv`, `verif/board/tb_board.sv`, the ROM loader and the
   tools carry the Y Board map, stream and descriptor; `rtl/yb_core.sv` is a
   stub with the final port list and a gradient on the real video timing;
-  `tools/romsets.py` has `gforce2`. Not written yet: the three-CPU bus, the
-  315-5296 I/O chip, the ADC, the 315-5305 sprite generator, the 315-5306
-  rotation, the 16B sprite layer, the mixer. `tools/mame_trace.py` still
-  traces two CPUs (M1 makes it three).
+  `tools/romsets.py` has `gforce2`. M1 (branch `m1-cpus`) filled `yb_core`
+  with the three 68000s, every CPU-side RAM, the shared-RAM arbiter, the
+  math chips, `rtl/io/yb_315_5296.sv` and `rtl/io/yb_msm6253.sv` (golden
+  models in `verif/models/`), the scanline IRQs, watchdog and sound latch;
+  `tools/mame_trace.py` traces three CPUs and `verif/board/check_m1.sh` is
+  the gate. Not written yet: the 315-5305 sprite generator, the 315-5306
+  rotation, the 16B sprite layer, the mixer, the sound board wiring (M5),
+  the analog modes for the games other than Galaxy Force II (M7).
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the
   handful that are listed in a comment at the top of the file.

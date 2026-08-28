@@ -17,7 +17,7 @@ says where every file came from.
 | M | Scope | Status |
 | --- | --- | --- |
 | M0 | Trim the scaffold to a `yb_core` stub, gforce2 ROM table and MRA, first Quartus fit | done 2026-08-27, 69/553 M10K, gradient on hardware |
-| M1 | Three 68000s, shared RAM, math chips, 315-5296, MSM6253, interrupts | |
+| M1 | Three 68000s, shared RAM, math chips, 315-5296, MSM6253, interrupts | done 2026-08-27, 415/553 M10K, traces 99.7% vs MAME, boots on hardware |
 | M2 | 315-5305 Y sprites into DDR3, palette, indirection | |
 | M3 | 315-5306 rotation scan-out | |
 | M4 | 315-5196 16B sprites and the 315-5312 mixer | |

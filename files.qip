@@ -18,7 +18,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/yb_math_5248.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/yb_math_5249.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/yb_ana_shape.sv
-# I/O still to write: 315-5296 port chip (replaces the X Board's CXD1095), the ADC.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/yb_315_5296.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/yb_msm6253.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/yb_rom_loader.sv

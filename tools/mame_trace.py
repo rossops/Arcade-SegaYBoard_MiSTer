@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Record MAME's executed-PC trace for the X Board 68000s.
+"""Record MAME's executed-PC trace for the Y Board 68000s.
 
-    mame_trace.py aburner2 --seconds 2 --out verif/golden/aburner2
+    mame_trace.py gforce2 --seconds 2 --out verif/golden/gforce2
 
-Runs MAME headless with a debugger script that traces both CPUs from reset,
-then keeps just the PC column so tools/trace_compare.py can check the RTL's
-fetch stream against it.
+Runs MAME headless with a debugger script that traces the three CPUs from
+reset, then keeps just the PC column so tools/trace_compare.py can check the
+RTL's fetch stream against it.
 """
 import argparse, os, subprocess, sys, tempfile
 
 ROMPATH = "/Volumes/roms/Arcade/MAME 0.289 ROMs (merged)"
+CPUS = (("main", "maincpu"), ("subx", "subx"), ("suby", "suby"))
 
 
 def main():
@@ -20,12 +21,11 @@ def main():
     ap.add_argument("--mame", default="mame")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    raw_main = os.path.abspath(os.path.join(a.out, "mame_trace_main.raw"))
-    raw_sub = os.path.abspath(os.path.join(a.out, "mame_trace_sub.raw"))
+    raws = {name: os.path.abspath(os.path.join(a.out, f"mame_trace_{name}.raw")) for name, _ in CPUS}
     script = os.path.join(a.out, "trace.dbg")
     with open(script, "w") as f:
-        f.write(f"trace {raw_main},mainpcb:maincpu,noloop\n")
-        f.write(f"trace {raw_sub},mainpcb:subcpu,noloop\n")
+        for name, tag in CPUS:
+            f.write(f"trace {raws[name]},{tag},noloop\n")
         f.write("go\n")
     cmd = [a.mame, a.set, "-rompath", ROMPATH, "-debug", "-debugscript", script,
            "-window", "-sound", "none", "-nothrottle", "-seconds_to_run", str(int(a.seconds)),
@@ -33,21 +33,21 @@ def main():
            "-debugger", "osx"]
     print(" ".join(cmd))
     subprocess.run(cmd, check=False)
-    for raw, name in ((raw_main, "trace_main_mame.txt"), (raw_sub, "trace_sub_mame.txt")):
+    for name, _ in CPUS:
         n = 0
-        with open(raw, errors="replace") as fi, open(os.path.join(a.out, name), "w") as fo:
+        with open(raws[name], errors="replace") as fi, open(os.path.join(a.out, f"trace_{name}_mame.txt"), "w") as fo:
             for line in fi:
                 if len(line) > 7 and line[6] == ":":
                     fo.write(line[:6].lower() + "\n")
                     n += 1
-        print(f"{name}: {n} instructions")
+        print(f"trace_{name}_mame.txt: {n} instructions")
     # keep the first 200k raw lines (with disassembly) for debugging
-    for raw, name in ((raw_main, "trace_main_mame_dis.txt"), (raw_sub, "trace_sub_mame_dis.txt")):
-        with open(raw, errors="replace") as fi, open(os.path.join(a.out, name), "w") as fo:
+    for name, _ in CPUS:
+        with open(raws[name], errors="replace") as fi, open(os.path.join(a.out, f"trace_{name}_mame_dis.txt"), "w") as fo:
             for i, line in enumerate(fi):
                 if i >= 200000: break
                 fo.write(line)
-        os.remove(raw)
+        os.remove(raws[name])
 
 
 if __name__ == "__main__":
