@@ -1,8 +1,8 @@
 //============================================================================
 //  Sega 315-5305 Y Board sprite generator, rendering the linked sprite list
 //  into one of two 512x512x16 framebuffers held in DDR3 through yb_fb_if,
-//  and the scan-out side of the 315-5306 for M2: whole-line reads with the
-//  rotation RAM's translation only (the affine part arrives in M3).
+//  latching the rotation parameters that travel with each buffer to the
+//  315-5306 scan-out (yb_rotate_5306).
 //  Algorithm: MAME sega16sp.cpp sega_yboard_sprite_device::draw:
 //    w0: e------- -------- end of list; -h-h---- hide; -----iii iiiiiiii
 //        indirection table address (/16 words) in sprite RAM
@@ -21,9 +21,9 @@
 //
 //  Sequence: every frame the renderer erases the back buffer, walks the list
 //  from sprite RAM as it is, and the buffers swap at the next vblank (MAME
-//  renders the list at screen update). The translation of the scan-out
-//  (currx, curry at rotation words 3F0-3F3, integer parts, +27 on x) is
-//  latched with the render and travels with the buffer to the display.
+//  renders the list at screen update). The rotation parameters (words
+//  3F0-3FB of the rotation buffer) are latched with the render and travel
+//  with the buffer to the display.
 //
 //  Sprite ROM: SDRAM port p2, 128-bit bursts = two consecutive 64-bit words,
 //  each stored as four 16-bit words with the first pen in the top nibble of
@@ -77,8 +77,7 @@ module yb_ysprite_5305 (
     input             fb_rd_ack,
 
     output reg        disp_buf,       // buffer currently displayed
-    output reg  [8:0] disp_ox,        // scan-out translation of the displayed buffer
-    output reg  [8:0] disp_oy,
+    output reg [191:0] disp_rot,      // its rotation parameters: {currx, curry, dyy, dxx, dxy, dyx}, 32 bits each
     output reg        rendering
 );
 
@@ -89,10 +88,11 @@ reg        er_need;
 reg  [8:0] er_line;
 reg [11:0] vis_clr;          // visited-set clear counter (runs during the erase)
 reg        vis_clearing;
-reg  [8:0] ox_r, oy_r;       // translation latched with the render
+reg [191:0] rot_r;           // rotation parameters latched with the render (words 3F0-3FB)
+reg   [3:0] rcnt;
 
 typedef enum logic [4:0] {
-    R_IDLE, R_ERASE, R_ERASEW, R_ROT0, R_ROT1, R_ROT2, R_ROT3, R_ROT4,
+    R_IDLE, R_ERASE, R_ERASEW, R_ROT,
     R_FETCH, R_FETCHW, R_DECODE, R_IND, R_INDW, R_ROW, R_BANK, R_CLIP, R_CLIPA, R_CLIPB, R_CLIPC,
     R_ROWWAIT, R_ROMREQ, R_ROMWAIT, R_PIX, R_ROWEND, R_ROWSKIP, R_NEXT
 } rs_t;
@@ -172,19 +172,8 @@ wire [3:0] pen  = pixels[3:0];
 wire [8:0] ind  = ind9[pen];
 wire       indv = indok[pen];
 
-// ---------------------------------------------------------------- scan-out
-// request line vcnt+1 (translated) of disp_buf at each line start
-always @(posedge clk) begin
-    if (reset) fb_rd_req <= 1'b0;
-    else begin
-        if (fb_rd_req) begin if (fb_rd_ack) fb_rd_req <= 1'b0; end
-        else if (line_start && (vcnt < 9'd223 || vcnt == 9'd261)) begin
-            fb_rd_req <= 1'b1;
-            fb_rd_buf <= {1'b0, disp_buf};
-            fb_rd_y   <= ((vcnt == 9'd261) ? 9'd0 : vcnt + 9'd1) + disp_oy;
-        end
-    end
-end
+// the whole-line read port is unused: the 315-5306 fetches single words
+always @(posedge clk) begin fb_rd_req <= 1'b0; fb_rd_buf <= 2'd0; fb_rd_y <= 9'd0; end
 
 // yacc += zoom; addr += pitch * (yacc >> 9); yacc &= 0x1ff, sum registered a
 // clock ahead (every use is at least two clocks after the last yacc write)
@@ -209,7 +198,7 @@ always @(posedge clk) begin
         burst_valid <= 1'b0; idx <= 12'd0; next_idx <= 12'd0; wcnt <= 4'd0; icnt <= 5'd0;
         fb_er_req <= 1'b0; did_render <= 1'b0; er_need <= 1'b1; er_line <= 9'd0;
         vis_clr <= 12'd0; vis_clearing <= 1'b0;
-        disp_ox <= 9'd0; disp_oy <= 9'd0; ox_r <= 9'd0; oy_r <= 9'd0;
+        disp_rot <= 192'd0; rot_r <= 192'd0; rcnt <= 4'd0;
         have_run <= 1'b0;
     end
     else begin
@@ -226,7 +215,7 @@ always @(posedge clk) begin
         if (vbl_start && !erasing) begin
             if (rendering || did_render) begin
                 disp_buf <= ~disp_buf; er_need <= 1'b1;
-                disp_ox <= ox_r; disp_oy <= oy_r;
+                disp_rot <= rot_r;
             end
             did_render <= 1'b0;
             rendering <= 1'b0;
@@ -246,8 +235,8 @@ always @(posedge clk) begin
                 did_render <= 1'b1;
                 idx <= 12'd0;
                 burst_valid <= 1'b0;
-                rot_addr <= 10'h3F0;
-                rs <= R_ROT0;
+                rot_addr <= 10'h3F0; rcnt <= 4'd0;
+                rs <= R_ROT;
             end
         end
         // erase the back buffer, all 512 lines, as soon as it becomes the back buffer
@@ -264,13 +253,16 @@ always @(posedge clk) begin
                 else begin er_line <= er_line + 9'd1; rs <= R_ERASE; end
             end
         end
-        // scan-out translation: currx (3F0:3F1) and curry (3F2:3F3), bits 22:14
-        // of each 32-bit value; the RAM answers two states after the address
-        R_ROT0: begin rot_addr <= 10'h3F1; rs <= R_ROT1; end
-        R_ROT1: begin rot_addr <= 10'h3F2; ox_r <= {rot_q[6:0], 2'b00}; rs <= R_ROT2; end
-        R_ROT2: begin rot_addr <= 10'h3F3; ox_r <= ox_r | {7'd0, rot_q[15:14]}; rs <= R_ROT3; end
-        R_ROT3: begin oy_r <= {rot_q[6:0], 2'b00}; ox_r <= ox_r + 9'd27; rs <= R_ROT4; end
-        R_ROT4: begin oy_r <= oy_r | {7'd0, rot_q[15:14]}; rs <= R_FETCH; end
+        // rotation parameters, words 3F0-3FB (big-endian 32-bit pairs) into
+        // rot_r, most significant first. The address for word 0 went out in
+        // R_IDLE and the RAM answers two clocks later, in the rcnt == 1 cycle;
+        // word k is captured at rcnt == k + 1
+        R_ROT: begin
+            rot_addr <= 10'h3F0 + {6'd0, rcnt + 4'd1};
+            if (rcnt >= 4'd1) rot_r <= {rot_r[175:0], rot_q};
+            rcnt <= rcnt + 4'd1;
+            if (rcnt == 4'd12) rs <= R_FETCH;
+        end
         // read the 8 words of the entry (sram is 1-clk registered) and the visited bit
         R_FETCH: begin sram_addr <= {idx, 3'd0}; wcnt <= 4'd0; rs <= R_FETCHW; end
         R_FETCHW: begin

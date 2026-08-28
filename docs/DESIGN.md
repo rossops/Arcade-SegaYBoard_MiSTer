@@ -304,16 +304,20 @@ question 6; the X Board's bus-grant model does not apply because no CPU
 owns another's space here.
 
 DDR3: two 512x512x16 Y framebuffers at 0x30000000 and 0x30080000. Rendering
-writes runs (reuse `yb_fb_if`'s run writer, 512-pixel rows). Scan-out is the
-new part: the rotation reads one pixel per output pixel from an arbitrary
-address. Do it one line ahead into a line buffer at `clk_ram`, through a
-small cache of 64-bit words (four pixels) with the next word prefetched;
-consecutive samples along an output line move by about one source pixel, so
-misses run at roughly a quarter of the pixel rate: about 100-200 DDR3
-single reads per 64 us line, well inside the budget the X Board measured.
-Tile the framebuffer in DDR3 (8x8 pixel blocks per 128-byte burst) if a
-straight row layout misses too often on steep rotations. This is risk 1;
-measure it in M3 before anything else is built on it.
+writes runs (`yb_fb_if`'s run writer, 512-pixel rows). Scan-out is the new
+part: the rotation reads one pixel per output pixel from an arbitrary
+address. M3 built it (`yb_rotate_5306`) one line ahead into a double-banked
+line buffer at `clk_ram`, through a direct-mapped cache of 128 64-bit words
+(four pixels each) indexed by `sx[8:2] ^ sy[6:0]`: a whole source row stays
+resident when consecutive lines read the same row, and vertical walks
+spread over the entries. Misses are single-word DDR3 reads (`yb_fb_if`'s
+`rq` port, served ahead of erases and run flushes). Measured on the
+captures: 80 misses per line on the identity, 156 at the steepest attract
+rotation (18 degrees), 2,550 clocks for the worst line against the 6,400
+of a scanline with the bench's DDR3 model; in-game rolls will approach one
+miss per pixel, which is where the tiled framebuffer layout (8x8 pixel
+blocks per burst) or a prefetch of the next word comes in if hardware
+shows late lines. The bench counts late lines.
 
 ### Modules
 | File | Role |
@@ -456,12 +460,31 @@ pixel ahead of the framework's sample point (the `-1` in `yb_core`'s
 `fbr_xs`); `tools/board_check.py` found the picture one column early
 without it. Whether that column belongs to the 315-5306 or to the video
 pipeline is settled in M4 against MAME captures, together with the 16B
-origin. The rotation parameters the game writes in attract mode are not an
-identity: `dxx` 1.0, `dyx` 0, `dxy` 1.0, `dyy` 0, so MAME reads one source
-row for the whole screen shifted a pixel per line (the ground plane). M2's
-translation-only scan-out therefore shows the framebuffer, not MAME's
-picture, until M3. A full render of the busiest capture (348 entries) takes
+origin. The rotation parameters in the captures: the identity with a
+translation for the first twenty seconds of the attract mode, then mild
+rotations (`dyx` up to 0.325, about 18 degrees) from frame 1400 on. A
+direct-mapped cache of 128 64-bit words needs 80 DDR3 reads per line on the
+identity and 156 at the steepest attract angle; in-game rolls approach one
+read per pixel. A full render of the busiest capture (348 entries) takes
 well under a frame at one pixel per clock; the erase of 512 lines is 0.7 ms.
+
+M3 findings (gforce2). The scan-out is pixel-exact against the model
+(MAME's `rotate_draw`) on all 20 captured rotation parameter sets when fed
+the framebuffer the model renders from the same capture, and the board
+frame is exact through the whole chain. Two bugs found by the harness on the
+way: the cache RAM was read with the registered index (one pixel stale, so
+the first pixel of every fetched word came from the previous word), and a
+fill and the next lookup hit the RAM in the same clock (every second pixel
+of a word missed again). Two more at board level: the renderer's latch of
+the twelve rotation words started one state late (every parameter shifted
+by 16 bits, which showed up as a scan-out that never moved), and the line
+buffer's display side must select its bank in `clk_sys` at every visible
+line start, not through the synchronised `clk_ram` pulse, or the first
+pixel of a line can come from the previous line. With the buffer read
+straight at `hcnt` the blanking is no longer delayed a pixel: M2's `-1`
+was the pipeline's, not the chip's. The DDR3 read budget is as predicted by
+the Python cache simulation, so the layout question stays open until a
+game rolls.
 
 M0 in full, since it is next. Rewrite `rtl/yb_pkg.sv` from the tables in
 section 3 (clocks, SDRAM and DDR3 map, stream offsets, `board_desc_t`). Trim

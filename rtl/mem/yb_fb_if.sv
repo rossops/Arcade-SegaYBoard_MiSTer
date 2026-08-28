@@ -54,6 +54,15 @@ module yb_fb_if #(
     input       [8:0] er_y,
     output reg        er_ack,
 
+    // single-word read port (the 315-5306 scan-out cache): one 64-bit word
+    // at (buffer, line, word); served ahead of erases and run flushes
+    input             rq_req,
+    input       [1:0] rq_buf,
+    input       [8:0] rq_y,
+    input       [6:0] rq_xw,
+    output reg        rq_ack,
+    output reg [63:0] rq_data,
+
     // line read port -> mixer
     input             rd_req,
     input       [1:0] rd_buf,
@@ -92,7 +101,7 @@ wire       scan_bank = rd_line_publish ? fill_bank : display_bank;
 // DDR engine
 typedef enum logic [3:0] { D_IDLE, D_WR_PF, D_WR, D_ER, D_RD, D_RD_W,
                            D_SH_R, D_SH_RW, D_SH_W,
-                           D_WR_SKIP, D_WR_SKIP_PF, D_SH_SKIP } dstate_t;
+                           D_WR_SKIP, D_WR_SKIP_PF, D_SH_SKIP, D_RQ, D_RQ_W } dstate_t;
 dstate_t dst = D_IDLE;
 
 reg [28:0] daddr;
@@ -214,8 +223,9 @@ reg flush_req;
 wire erase_pending = er_req && !er_ack;
 // Do not reuse a completed fill bank until the raster boundary publishes it.
 wire read_pending  = rd_req && !rd_ack && !line_ready;
+wire word_pending  = rq_req && !rq_ack;
 wire flush_accept  = (dst == D_IDLE) && !erase_pending &&
-                     !read_pending && flush_req;
+                     !read_pending && !word_pending && flush_req;
 
 // capture pixel runs (indexed by the pixel's own x)
 always @(posedge clk) begin
@@ -262,7 +272,7 @@ assign wr_busy = wr_end | wr_dup | flush_req |
 
 always @(posedge clk) begin
     if (rst) begin
-        dst <= D_IDLE; dwe <= 0; drd <= 0; er_ack <= 0; rd_ack <= 0;
+        dst <= D_IDLE; dwe <= 0; drd <= 0; er_ack <= 0; rd_ack <= 0; rq_ack <= 0;
         run_word_q <= 8'd0;
         display_bank <= 1'b0;
         fill_bank <= 1'b1;
@@ -278,7 +288,15 @@ always @(posedge clk) begin
             dwe <= 0; drd <= 0;
             // A line fetch is one 256-beat read and has a raster deadline; an
             // erase is up to 512 lines (2x) and can wait a line between them.
-            if (read_pending) begin
+            // A scan-out word read has the tightest deadline of all.
+            if (word_pending) begin
+                daddr  <= pix_addr(rq_buf, rq_y, {1'b0, rq_xw});
+                dburst <= 8'd1;
+                drd    <= 1'b1;
+                dbe    <= 8'hFF;
+                dst    <= D_RQ;
+            end
+            else if (read_pending) begin
                 daddr  <= pix_addr(rd_buf, rd_y, 8'd0);
                 dburst <= 8'd128;               // 2x: two 128-beat bursts (burstcnt is 8 bits)
                 rbeat  <= 0;
@@ -436,6 +454,15 @@ always @(posedge clk) begin
                 daddr <= daddr + 1'd1;
             end
         end
+        D_RQ: if (!DDRAM_BUSY) begin
+            drd <= 0;
+            dst <= D_RQ_W;
+        end
+        D_RQ_W: if (DDRAM_DOUT_READY) begin
+            rq_data <= DDRAM_DOUT;
+            rq_ack  <= 1'b1;
+            dst     <= D_IDLE;
+        end
         D_RD: if (!DDRAM_BUSY) begin
             drd <= 1'b0;
             dst <= D_RD_W;
@@ -465,6 +492,7 @@ always @(posedge clk) begin
         // and the acknowledge drops as soon as its producer drops request.
         if (!rd_req) rd_ack <= 1'b0;
         if (!er_req) er_ack <= 1'b0;
+        if (!rq_req) rq_ack <= 1'b0;
     end
 end
 

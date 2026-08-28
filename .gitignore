@@ -66,3 +66,6 @@ __pycache__/
 verif/unit/ysprite/*.hex
 verif/unit/ysprite/*.vvp
 verif/unit/ysprite/fb.txt
+verif/unit/rotate/*.hex
+verif/unit/rotate/*.vvp
+verif/unit/rotate/*.txt

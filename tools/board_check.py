@@ -6,14 +6,13 @@ N+1 to be pixel-exact.
 
     board_check.py verif/board/out 100 [gforce2]
 
-M2: the scan-out is translation-only on both sides (model translate_only);
-M3 switches the model to the full affine scan-out.
+The scan-out is MAME's full affine walk (verif/models/rotate5306.py).
 """
 import os, sys, zipfile
 from PIL import Image
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "verif"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from models import ysprite5305 as ys, palette5242 as pal
+from models import ysprite5305 as ys, rotate5306 as rt, palette5242 as pal
 from romsets import ROMSETS
 ZIPDIR = "/Volumes/roms/Arcade/MAME 0.289 ROMs (merged)"
 
@@ -31,7 +30,7 @@ def main(outdir, frame, setname="gforce2"):
     zf = zipfile.ZipFile(os.path.join(ZIPDIR, rs["zipfile"] + ".zip"))
     rom = ys.load_rom_qwords(zf, [f[0] for f in rs["regions"]["ysprite"][1]])
     fb = ys.render(splist, rotbuf, rom, rs["yspr_banks"])
-    idx, _ = ys.scanout(fb, rotbuf, W, H, translate_only=True)
+    idx, _ = rt.scanout(fb, rotbuf, W, H)
     shown = frame + 1
     rtl = Image.open(os.path.join(outdir, f"frame_{shown:04d}.ppm")).convert("RGB")
     ok = 0

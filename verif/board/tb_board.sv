@@ -169,6 +169,23 @@ always @(posedge clk_sys) begin
     end
 end
 
+// ---- 315-5306 scan-out statistics: worst DDR3 misses and clocks per line in
+// each frame, and lines that were not ready at their deadline (cumulative)
+integer rot_miss_max = 0, rot_clk_max = 0;
+reg vb_rot_d;
+always @(posedge clk_ram) begin
+    if (core.rotate.st == 5 || (core.rotate.st == 0 && !core.rotate.building)) begin
+        if (core.rotate.miss_count > rot_miss_max) rot_miss_max = core.rotate.miss_count;
+        if (core.rotate.line_clocks > rot_clk_max) rot_clk_max = core.rotate.line_clocks;
+    end
+end
+always @(posedge clk_sys) begin
+    if (vb && !vb_rot_d && frame != 0 && (frame % 20 == 0 || frame == dumpframe + 1))
+        $display("SCANOUT f=%0d worst misses/line=%0d worst clocks/line=%0d late lines so far=%0d", frame, rot_miss_max, rot_clk_max, core.rotate.late_count);
+    if (vb && !vb_rot_d) begin rot_miss_max = 0; rot_clk_max = 0; end
+    vb_rot_d <= vb;
+end
+
 // ---- +dumpframe=N: the renderer's inputs at line 226 of frame N (its start:
 // sprite RAM, the rotation buffer it clips with) and the palette at line 226
 // of frame N+1, when the buffer rendered from them is on screen.
@@ -196,7 +213,7 @@ always @(posedge clk_sys) begin
         end
         if (frame == dumpframe + 1) begin
             dump_ram("rtl_paletteram.bin", 8192, 2);
-            $display("dumped palette at frame %0d line 226 (display ox=%0d oy=%0d)", frame, core.sprites.disp_ox, core.sprites.disp_oy);
+            $display("dumped palette at frame %0d line 226", frame);
         end
     end
 end

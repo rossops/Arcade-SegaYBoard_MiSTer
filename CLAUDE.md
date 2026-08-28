@@ -23,9 +23,11 @@ convention below, and its git history shows what each decision cost.
   `verif/models/ysprite5305.py` (render + full and translate-only scanout),
   standalone harness `verif/unit/ysprite/`, MAME dumps via
   `tools/mame_capture.py` into `verif/golden/gforce2/f<N>/`, board check
-  `tools/board_check.py`, gate `verif/board/check_m2.sh`. Not written yet:
-  the 315-5306 affine scan-out with its DDR3 cache (M3), the 16B sprite
-  layer and mixer (M4), the sound board wiring (M5), the analog modes for
+  `tools/board_check.py`, gate `verif/board/check_m2.sh`. M3 (branch
+  `m3-rotation`) added `rtl/video/yb_rotate_5306.sv` (affine scan-out with
+  a 128-word DDR3 cache, `verif/unit/rotate/` harness, `verif/models/
+  rotate5306.py`, gate `verif/board/check_m3.sh`). Not written yet: the
+  16B sprite layer and mixer (M4), the sound board wiring (M5), the analog modes for
   the games other than Galaxy Force II (M7).
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the

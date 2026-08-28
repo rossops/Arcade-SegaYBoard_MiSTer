@@ -54,10 +54,11 @@ yb_fb_if #(.FB_BASE(32'h3000_0000)) fb (
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end), .wr_dup(fbw_dup), .wr_dup_y(fbw_dup_y), .wr_shadow(1'b0), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
     .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
+    .rq_req(1'b0), .rq_buf(2'd0), .rq_y(9'd0), .rq_xw(7'd0), .rq_ack(), .rq_data(),
     .rd_x(10'd0), .rd_pix(fbr_pix), .rd_pub_ok(1'b1));
 
 reg start_req = 0;
-wire disp_buf, rendering; wire [8:0] disp_ox, disp_oy;
+wire disp_buf, rendering; wire [191:0] disp_rot;
 yb_ysprite_5305 dut (
     .clk(clk), .reset(reset), .num_banks(8'd8),
     .start_req(start_req), .vbl_start(1'b0), .line_start(1'b0), .vcnt(9'd0),
@@ -67,7 +68,7 @@ yb_ysprite_5305 dut (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end), .fb_wr_dup(fbw_dup), .fb_wr_dup_y(fbw_dup_y), .fb_wr_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
     .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
-    .disp_buf(disp_buf), .disp_ox(disp_ox), .disp_oy(disp_oy), .rendering(rendering));
+    .disp_buf(disp_buf), .disp_rot(disp_rot), .rendering(rendering));
 
 integer fd, x, y, cyc, nspr = 0, npix = 0;
 reg started = 0;
@@ -94,7 +95,7 @@ initial begin
                     $fwrite(fd, "%04x %04x %04x %04x\n", q[15:0], q[31:16], q[47:32], q[63:48]);
                 end
             $fclose(fd);
-            $display("render done in %0d cycles: %0d entries, %0d pixel writes, ox=%0d oy=%0d", cyc, nspr, npix, dut.ox_r, dut.oy_r);
+            $display("render done in %0d cycles: %0d entries, %0d pixel writes, currx=%0d curry=%0d", cyc, nspr, npix, $signed(dut.rot_r[191:160]), $signed(dut.rot_r[159:128]));
             $finish;
         end
         if (cyc > 6000000) begin

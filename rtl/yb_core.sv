@@ -516,7 +516,8 @@ wire  [3:0] fbw_lanes;
 wire  [8:0] fbw_y, fbw_dup_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix, fbr_pix;
 wire        spr_disp_buf, spr_rendering;
-wire  [8:0] disp_ox, disp_oy;
+wire [191:0] disp_rot;
+wire        rq_req, rq_ack; wire [1:0] rq_buf; wire [8:0] rq_y; wire [6:0] rq_xw; wire [63:0] rq_data;
 wire [14:0] yspr_rd_addr; wire [15:0] yspr_rd_q;
 wire  [9:0] rot_rd_addr;  wire [15:0] rot_rd_q;
 yb_ysprite_5305 sprites (
@@ -529,19 +530,20 @@ yb_ysprite_5305 sprites (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end), .fb_wr_dup(fbw_dup), .fb_wr_dup_y(fbw_dup_y), .fb_wr_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
     .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
-    .disp_buf(spr_disp_buf), .disp_ox(disp_ox), .disp_oy(disp_oy), .rendering(spr_rendering)
+    .disp_buf(spr_disp_buf), .disp_rot(disp_rot), .rendering(spr_rendering)
 );
-// scan-out: the line buffer holds fb line (vcnt + oy); pixel x reads (x + ox)
-// mod 512. The fetched line is published at hcnt 399 (in hblank), where rd_x
-// is forced to 0 for that purpose. The read runs one pixel ahead of the
-// pixel the framework samples (line buffer, index, palette), hence the -1:
-// tools/board_check.py showed the picture one column early without it.
-reg [8:0] ox_sys, oy_sys;
-always @(posedge clk_sys) if (line_start) begin ox_sys <= disp_ox; oy_sys <= disp_oy; end
-wire [8:0] fbr_xs = hcnt + ox_sys - 9'd1;
-wire [9:0] fbr_x  = (hcnt == 9'd399) ? 10'd0 : {1'b0, fbr_xs};
-wire       fbr_pub = (hcnt == 9'd399);
-wire [8:0] src_line = vcnt + oy_sys;
+// 315-5306 scan-out: builds each screen line one line ahead from the
+// displayed buffer through its word cache (clk_ram); the display reads its
+// line buffer at hcnt
+wire [12:0] rot_idx; wire [7:0] rot_pri;
+wire  [8:0] rot_miss; wire [12:0] rot_clocks; wire [15:0] rot_late;
+yb_rotate_5306 rotate (
+    .clk(clk_ram), .reset(reset),
+    .line_start(r_line_start), .vcnt(r_vcnt_b), .disp_buf(spr_disp_buf), .disp_rot(disp_rot),
+    .rq_req(rq_req), .rq_buf(rq_buf), .rq_y(rq_y), .rq_xw(rq_xw), .rq_ack(rq_ack), .rq_data(rq_data),
+    .rd_clk(clk_sys), .rd_line_start(line_start && vcnt <= 9'd223), .rd_x(hcnt), .rd_idx(rot_idx), .rd_pri(rot_pri),
+    .miss_count(rot_miss), .line_clocks(rot_clocks), .late_count(rot_late)
+);
 yb_fb_if #(.FB_BASE(32'h3000_0000)) fb (
     .clk(clk_ram), .rst(reset), .hires(1'b0),
     .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
@@ -550,35 +552,33 @@ yb_fb_if #(.FB_BASE(32'h3000_0000)) fb (
     .wr_start(fbw_start), .wr_buf(fbw_buf), .wr_x(fbw_x), .wr_lanes(fbw_lanes), .wr_y(fbw_y), .wr_dup(fbw_dup), .wr_dup_y(fbw_dup_y),
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end), .wr_shadow(1'b0), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
+    .rq_req(rq_req), .rq_buf(rq_buf), .rq_y(rq_y), .rq_xw(rq_xw), .rq_ack(rq_ack), .rq_data(rq_data),
     .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
-    .rd_x(fbr_x), .rd_pix(fbr_pix), .rd_pub_ok(fbr_pub)
+    .rd_x(10'd0), .rd_pix(fbr_pix), .rd_pub_ok(1'b1)
 );
 
-// ================================================================ video (M2)
-// Y layer only: a written framebuffer pixel becomes palette index
-// {1, colour[1:0], colour[2], pen[8:0]} (MAME rotate_draw), an empty one
-// the source line number (the scanline colour). The pipeline is line buffer
-// read, index (1 clock after ce_out), palette (2 clocks); blanking and sync
-// are delayed one pixel so the framework samples the RGB of the same pixel.
-// The 16B layer and the 315-5312 mixer arrive in M4.
-reg        ce_pix_d1;
-reg [15:0] spr_pix_r;
+// ================================================================ video (M3)
+// Y layer only: the 315-5306 line buffer gives the palette index and the
+// priority of screen pixel hcnt. The pipeline is line buffer read (two
+// clocks after ce_out, the address is hcnt), palette (2 clocks): the RGB of
+// pixel hcnt is ready before the next pixel enable, when the framework
+// samples it together with the blanking of the same pixel, so blanking and
+// sync are not delayed. The 16B layer and the 315-5312 mixer arrive in M4.
+reg        ce_pix_d1, ce_pix_d2;
 reg [12:0] pal_idx;
+reg  [7:0] y_pri;
 always @(posedge clk_sys) begin
-    ce_pix_d1 <= ce_out;
-    if (ce_out) spr_pix_r <= fbr_pix;
-    if (ce_pix_d1) pal_idx <= (spr_pix_r != 16'hFFFF) ? {1'b1, spr_pix_r[14:13], spr_pix_r[15], spr_pix_r[8:0]} : {4'd0, src_line};
+    ce_pix_d1 <= ce_out; ce_pix_d2 <= ce_pix_d1;
+    if (ce_pix_d2) begin pal_idx <= rot_idx; y_pri <= rot_pri; end
 end
 wire [7:0] pal_r, pal_g, pal_b;
 yb_palette_5242 palette (.clk(clk_sys), .a_addr(ya[13:1]), .a_din(y_dout), .a_be(y_be),
     .a_we(y_valid && y_wr && y_sel_pal && y_start), .a_dout(pal_q),
     .b_addr(pal_idx), .b_effects(1'b0), .r(pal_r), .g(pal_g), .b(pal_b));
-reg hb_d, vb_d2, hs_d, vs_d;
-always @(posedge clk_sys) if (ce_out) begin hb_d <= ohblank; vb_d2 <= vblank; hs_d <= ohsync; vs_d <= vsync; end
-assign hb = hb_d; assign vb = vb_d2; assign hs = hs_d; assign vs = vs_d;
-assign r = (hb_d | vb_d2 | !display_enable) ? 8'd0 : pal_r;
-assign g = (hb_d | vb_d2 | !display_enable) ? 8'd0 : pal_g;
-assign b = (hb_d | vb_d2 | !display_enable) ? 8'd0 : pal_b;
+assign hb = ohblank; assign vb = vblank; assign hs = ohsync; assign vs = vsync;
+assign r = (ohblank | vblank | !display_enable) ? 8'd0 : pal_r;
+assign g = (ohblank | vblank | !display_enable) ? 8'd0 : pal_g;
+assign b = (ohblank | vblank | !display_enable) ? 8'd0 : pal_b;
 
 // ---------------------------------------------------------------- tie-offs
 assign p4_req = 1'b0; assign p4_addr = '0; assign p4_urgent = 1'b0;
