@@ -63,3 +63,6 @@ __pycache__/
 .pytest_cache/
 /snap/
 /.claude/
+verif/unit/ysprite/*.hex
+verif/unit/ysprite/*.vvp
+verif/unit/ysprite/fb.txt
