@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Capture MAME video RAM dumps and a screenshot at a given frame.
+"""Capture MAME Y Board video RAM dumps and a screenshot at a given frame.
 
-    mame_capture.py aburner2 --frame 300 --out verif/golden/aburner2/f300 [--test]
+    mame_capture.py gforce2 --frame 300 --out verif/golden/gforce2/f300 [--test]
 
 --test starts the game in service/test mode (DIP). The snapshot is written by
 MAME into the output directory as <setname>/0000.png and moved to frame.png.

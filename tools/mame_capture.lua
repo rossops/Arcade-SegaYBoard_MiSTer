@@ -1,5 +1,5 @@
--- MAME autoboot script: at frame CAPTURE_FRAME dump the X Board video RAMs
--- and take a screenshot, then exit. Configure through environment variables
+-- MAME autoboot script: at frame YB_FRAME dump the Y Board video RAMs and
+-- take a screenshot, then exit. Configure through environment variables
 -- YB_FRAME (frame number) and YB_OUT (output directory).
 local frame_target = tonumber(os.getenv("YB_FRAME") or "300")
 local outdir = os.getenv("YB_OUT") or "."
@@ -17,32 +17,18 @@ end
 
 local test_mode = os.getenv("YB_TEST") == "1"
 local test_field = nil
--- The sprite list the chip renders is the one in sprite RAM at the moment
--- of the $110000 write (MAME swaps buffers there). Capture it on every
--- write; the last capture before the target frame is what the PNG shows.
-local main_space = nil
-local tap = nil
-local road_rtap = nil
-local road_wtap = nil
+local suby_space = nil
+local rot_tap = nil
 
 emu.register_frame_done(function()
     frame = frame + 1
-    if tap == nil then
-        main_space = manager.machine.devices[":mainpcb:maincpu"].spaces["program"]
-        tap = main_space:install_write_tap(0x110000, 0x11ffff, "yb_sprswap", function(offset, data, mask)
-            if not done then dump(main_space, 0x100000, 0x800, outdir .. "/spritelist.bin") end
-        end)
-        -- road RAM is swapped into the display buffer on a control read; the
-        -- sub CPU owns the road ($EE000 in its map). Save the RAM at that
-        -- moment, and the control value on write.
-        local sub_space = manager.machine.devices[":mainpcb:subcpu"].spaces["program"]
-        road_rtap = sub_space:install_read_tap(0xee000, 0xeffff, "yb_roadswap", function(offset, data, mask)
-            if not done then dump(sub_space, 0xec000, 0x800, outdir .. "/roadbuf.bin") end
-        end)
-        road_wtap = sub_space:install_write_tap(0xee000, 0xeffff, "yb_roadctl", function(offset, data, mask)
-            if not done then
-                local f = io.open(outdir .. "/roadctl.txt", "w"); f:write(string.format("%d\n", data & 7)); f:close()
-            end
+    if rot_tap == nil then
+        -- a read of 198000 swaps the rotation RAM with the buffer the
+        -- scan-out uses; keep the RAM as it is right after each swap (the
+        -- previous buffer) so the pairing can be checked either way
+        suby_space = manager.machine.devices[":suby"].spaces["program"]
+        rot_tap = suby_space:install_read_tap(0x198000, 0x19ffff, "yb_rotswap", function(offset, data, mask)
+            if not done then dump(suby_space, 0x180000, 0x400, outdir .. "/rotateram_swap.bin") end
         end)
     end
     if test_mode then
@@ -61,12 +47,11 @@ emu.register_frame_done(function()
     end
     if done or frame < frame_target then return end
     done = true
-    local main = manager.machine.devices[":mainpcb:maincpu"].spaces["program"]
-    dump(main, 0x0C0000, 0x8000, outdir .. "/tileram.bin")
-    dump(main, 0x0D0000, 0x800,  outdir .. "/textram.bin")
-    dump(main, 0x120000, 0x2000, outdir .. "/paletteram.bin")
-    dump(main, 0x100000, 0x800,  outdir .. "/spriteram.bin")
-    dump(main, 0x2EC000, 0x800,  outdir .. "/roadram.bin")
+    local subx = manager.machine.devices[":subx"].spaces["program"]
+    dump(subx, 0x180000, 0x8000, outdir .. "/yspriteram.bin")
+    dump(suby_space, 0x180000, 0x400, outdir .. "/rotateram.bin")
+    dump(suby_space, 0x188000, 0x800, outdir .. "/bspriteram.bin")
+    dump(suby_space, 0x190000, 0x2000, outdir .. "/paletteram.bin")
     local f = io.open(outdir .. "/frame.txt", "w"); f:write(tostring(frame) .. "\n"); f:close()
     manager.machine.video:snapshot()
     manager.machine:exit()

@@ -151,9 +151,55 @@ always @(posedge clk_sys) begin
     if (core.wd_reset) $display("WATCHDOG reset f=%0d", frame);
 end
 
-// ---- +dumpframe=N: RAM dumps at the start of that frame's vblank (M2 adds the RAMs)
+// ---- +trace_vid: when sub Y swaps the rotation RAM and where sub X writes the
+// sprite list (first/last line with writes per frame), to place the render
+reg trace_vid; initial trace_vid = $test$plusargs("trace_vid");
+integer ys_first = -1, ys_last = -1, ys_n = 0;
+reg vb_tv_d;
+always @(posedge clk_sys) begin
+    vb_tv_d <= vb;
+    if (trace_vid && core.y_cs && core.y_rd && core.y_sel_rotc) $display("ROTSWAP f=%0d line=%0d", frame, core.vcnt);
+    if (trace_vid && core.x_start && core.x_wr && core.x_sel_yspr) begin
+        if (ys_first < 0) ys_first = core.vcnt; ys_last = core.vcnt; ys_n = ys_n + 1;
+        if (ys_n < 4 || core.vcnt == 9'd223) $display("YSPRW f=%0d line=%0d a=%05x d=%04x", frame, core.vcnt, {core.xa[15:1], 1'b0}, core.x_dout);
+    end
+    if (trace_vid && vb && !vb_tv_d) begin
+        $display("YSPR-WRITES f=%0d n=%0d first_line=%0d last_line=%0d", frame, ys_n, ys_first, ys_last);
+        ys_first = -1; ys_last = -1; ys_n = 0;
+    end
+end
+
+// ---- +dumpframe=N: the renderer's inputs at line 226 of frame N (its start:
+// sprite RAM, the rotation buffer it clips with) and the palette at line 226
+// of frame N+1, when the buffer rendered from them is on screen.
+// tools/board_check.py renders the model from these and compares frame N+1.
 integer dumpframe = -1;
 initial begin if (!$value$plusargs("dumpframe=%d", dumpframe)) dumpframe = -1; end
+task automatic dump_ram(input string name, input integer words, input integer which);
+    integer fd, k;
+    fd = $fopen(name, "wb");
+    for (k = 0; k < words; k = k + 1) begin
+        case (which)
+            0: $fwrite(fd, "%c%c", core.yspriteram.mem[k][7:0], core.yspriteram.mem[k][15:8]);
+            1: $fwrite(fd, "%c%c", core.rotateram.mem[{~core.rot_bank, k[9:0]}][7:0], core.rotateram.mem[{~core.rot_bank, k[9:0]}][15:8]);
+            default: $fwrite(fd, "%c%c", core.palette.mem[k][7:0], core.palette.mem[k][15:8]);
+        endcase
+    end
+    $fclose(fd);
+endtask
+always @(posedge clk_sys) begin
+    if (core.line_start && core.vcnt == 9'd226 && dumpframe >= 0) begin
+        if (frame == dumpframe) begin
+            dump_ram("rtl_yspriteram.bin", 32768, 0);
+            dump_ram("rtl_rotbuf.bin", 1024, 1);
+            $display("dumped sprite RAM and rotation buffer at frame %0d line 226", frame);
+        end
+        if (frame == dumpframe + 1) begin
+            dump_ram("rtl_paletteram.bin", 8192, 2);
+            $display("dumped palette at frame %0d line 226 (display ox=%0d oy=%0d)", frame, core.sprites.disp_ox, core.sprites.disp_oy);
+        end
+    end
+end
 
 // ---- +coin=N: press Coin 1 for four frames from frame N (matches tools/mame_coin.lua)
 integer coin_frame = -1;

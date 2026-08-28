@@ -17,9 +17,16 @@ convention below, and its git history shows what each decision cost.
   math chips, `rtl/io/yb_315_5296.sv` and `rtl/io/yb_msm6253.sv` (golden
   models in `verif/models/`), the scanline IRQs, watchdog and sound latch;
   `tools/mame_trace.py` traces three CPUs and `verif/board/check_m1.sh` is
-  the gate. Not written yet: the 315-5305 sprite generator, the 315-5306
-  rotation, the 16B sprite layer, the mixer, the sound board wiring (M5),
-  the analog modes for the games other than Galaxy Force II (M7).
+  the gate. M2 (branch `m2-ysprites`) added `rtl/video/yb_ysprite_5305.sv`
+  rendering into the DDR3 framebuffers (`yb_fb_if`, now 512-line buffers)
+  with a translation-only scan-out through the palette; golden model
+  `verif/models/ysprite5305.py` (render + full and translate-only scanout),
+  standalone harness `verif/unit/ysprite/`, MAME dumps via
+  `tools/mame_capture.py` into `verif/golden/gforce2/f<N>/`, board check
+  `tools/board_check.py`, gate `verif/board/check_m2.sh`. Not written yet:
+  the 315-5306 affine scan-out with its DDR3 cache (M3), the 16B sprite
+  layer and mixer (M4), the sound board wiring (M5), the analog modes for
+  the games other than Galaxy Force II (M7).
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the
   handful that are listed in a comment at the top of the file.

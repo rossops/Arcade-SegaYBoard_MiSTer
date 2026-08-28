@@ -1,7 +1,7 @@
 //============================================================================
 //  Sega X Board — 315-5211A sprite framebuffer interface, forked from the
-//  System 32 core's s32_fb_if (same DDR3 services). Two 512x256x16 buffers
-//  at FB_BASE + buf*512*256*2; the X Board uses buffers 0 and 1 only.
+//  System 32 core's s32_fb_if (same DDR3 services). Two 512x512x16 buffers
+//  at FB_BASE + buf*512*512*2 for the Y Board (the X Board's were 512x256).
 //  Empty framebuffer pixel = 0xFFFF (MAME's transparent value).
 //  Services (per DESIGN.md):
 //    - erase_line(y):     fill line with 0xFFFF
@@ -144,14 +144,15 @@ end
 function automatic [28:0] pix_addr(input [1:0] buf_i, input [8:0] y,
                                    input [7:0] x_word);
     // 64-bit word address for DDRAM: byte addr / 8. 1x: 128 words per line,
-    // 256 lines per buffer; 2x: 256 words per line, 512 lines per buffer.
+    // 512 lines per buffer (the Y Board's 512x512 buffers, 512 KB each; the
+    // X Board had 256 lines); 2x: 256 words per line, 512 lines per buffer.
     if (hires)
         pix_addr = FB_BASE[31:3] + {{10{1'b0}}, buf_i, 17'b0}
                                     + {{12{1'b0}}, y, 8'b0}
                                     + {21'b0, x_word};
     else
-        pix_addr = FB_BASE[31:3] + {{12{1'b0}}, buf_i, 15'b0}
-                                    + {{14{1'b0}}, y[7:0], 7'b0}
+        pix_addr = FB_BASE[31:3] + {{11{1'b0}}, buf_i, 16'b0}
+                                    + {{13{1'b0}}, y, 7'b0}
                                     + {21'b0, x_word};
 endfunction
 

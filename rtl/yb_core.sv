@@ -5,8 +5,8 @@
 //  the MSM6253 behind its /FMCS window, the scanline interrupts, the MB3773
 //  watchdog and the sound latch. The three CPUs share one 64 KB RAM through
 //  a one-access-per-clock arbiter. Video chips arrive in M2-M4: the display
-//  is a gradient gated by /KILL, and the video RAMs only exist on the CPU
-//  side. The Z80 sound board is wired in M5.
+//  is the Y layer (M2: 315-5305 into DDR3, translation-only scan-out,
+//  palette); the 16B layer and mixer come in M4, the Z80 sound board in M5.
 //============================================================================
 import yb_pkg::*;
 
@@ -64,7 +64,7 @@ module yb_core (
     input             coin1, coin2,
 
     // video (320x224 inside the 400x262 grid)
-    output reg  [7:0] r, g, b,
+    output      [7:0] r, g, b,
     output            ce_vid, hs, vs, hb, vb,
 
     output signed [15:0] audio_l, audio_r,
@@ -97,10 +97,6 @@ yb_video_timing timing (
     .hires(1'b0), .ce_out(ce_out), .ohcnt(ohcnt), .oline(oline), .ohblank(ohblank), .ohsync(ohsync)
 );
 assign ce_vid = ce_out;
-assign hs = ohsync;
-assign vs = vsync;
-assign hb = ohblank;
-assign vb = vblank;
 
 // ---------------------------------------------------------------- interrupts
 // No 315-5250 here. IPL2 is the 315-5306's "timer" line, one scanline wide
@@ -298,10 +294,10 @@ wire [15:0] x_lram_q, yspr_q, bkup_q, bkup_hq;
 yb_dpram #(.AW(13)) subx_ram (.clk(clk_sys), .a_addr(xa[13:1]), .a_din(x_dout), .a_be(x_be),
     .a_we(x_valid && x_wr && x_sel_lram && x_start), .a_dout(x_lram_q),
     .b_clk(clk_sys), .b_addr(13'd0), .b_dout());
-// Y sprite RAM (64 KB): port B is the 315-5305's (M2)
+// Y sprite RAM (64 KB): port B is the 315-5305's
 yb_dpram #(.AW(15)) yspriteram (.clk(clk_sys), .a_addr(xa[15:1]), .a_din(x_dout), .a_be(x_be),
     .a_we(x_valid && x_wr && x_sel_yspr && x_start), .a_dout(yspr_q),
-    .b_clk(clk_ram), .b_addr(15'd0), .b_dout());
+    .b_clk(clk_ram), .b_addr(yspr_rd_addr), .b_dout(yspr_rd_q));
 // backup RAM (16 KB, battery backed): the host borrows the CPU port for the
 // NVRAM download and reads port B for the upload
 wire        bk_we = x_valid && x_wr && x_sel_bkup && x_start;
@@ -392,14 +388,11 @@ always @(posedge clk_sys) begin
 end
 yb_dpram #(.AW(11)) rotateram (.clk(clk_sys), .a_addr({rot_bank, ya[10:1]}), .a_din(y_dout), .a_be(y_be),
     .a_we(y_valid && y_wr && y_sel_rot && y_start), .a_dout(rot_q),
-    .b_clk(clk_ram), .b_addr({~rot_bank, 10'd0}), .b_dout());
+    .b_clk(clk_ram), .b_addr({~rot_bank, rot_rd_addr}), .b_dout(rot_rd_q));
 yb_dpram #(.AW(11)) bspriteram (.clk(clk_sys), .a_addr(ya[11:1]), .a_din(y_dout), .a_be(y_be),
     .a_we(y_valid && y_wr && y_sel_bspr && y_start), .a_dout(bspr_q),
     .b_clk(clk_sys), .b_addr(11'd0), .b_dout());
-wire [7:0] pal_r, pal_g, pal_b;
-yb_palette_5242 palette (.clk(clk_sys), .a_addr(ya[13:1]), .a_din(y_dout), .a_be(y_be),
-    .a_we(y_valid && y_wr && y_sel_pal && y_start), .a_dout(pal_q),
-    .b_addr(13'd0), .b_effects(1'b0), .r(pal_r), .g(pal_g), .b(pal_b));
+// the palette (315-5242) is instantiated with the video pipeline below
 
 wire [15:0] y_mult_q, y_div_q;
 wire        y_div_rdy;
@@ -488,32 +481,106 @@ always @* begin
     else                 begin y_din = 16'hFFFF;   y_ack = y_ram_rdy; end   // rotation control, unmapped
 end
 
-// ================================================================ video (M1)
-// Placeholder picture behind /KILL: x gradient in red, y gradient in green,
-// blue on the right-hand 64 columns; black while the game holds the display
-// off. M2 replaces this with the Y layer.
-always @(posedge clk_sys) begin
-    if (ce_out) begin
-        if (ohblank || vblank || !display_enable) begin
-            r <= 8'd0; g <= 8'd0; b <= 8'd0;
-        end
-        else begin
-            r <= ohcnt[7:0];
-            g <= vcnt[7:0];
-            b <= ohcnt[8] ? 8'hFF : 8'h00;
-        end
-    end
+// ================================================================ Y sprites (M2)
+// The 315-5305 renders into the DDR3 framebuffers in clk_ram; the timing
+// pulses cross from clk_sys through 2-flop synchronisers on levels that are
+// high for a whole line (clean edges). The render starts at line 226: the
+// IRQ4 handler (line 223) has by then flipped the list head in sprite RAM
+// and swapped the rotation RAM, so the renderer reads a consistent list
+// (verif/board +trace_vid showed the head write and the swap at line 223,
+// the list bodies written during the frame into lists not linked in).
+wire       go_lvl = (vcnt == 9'd226);
+reg  [1:0] r_vbl_s, r_go_s, r_line_s;
+reg        r_vbl_d, r_go_d, r_line_d;
+reg  [8:0] r_vcnt_a, r_vcnt_b;
+reg  [7:0] r_banks_a, r_banks_b;   // descriptor bank count, quasi-static, into clk_ram
+reg        line_start_lvl;
+always @(posedge clk_sys) if (line_start) line_start_lvl <= 1'b1; else if (ce_pix && hcnt == 9'd200) line_start_lvl <= 1'b0;
+always @(posedge clk_ram) begin
+    r_vbl_s  <= {r_vbl_s[0],  vbl_irq};
+    r_go_s   <= {r_go_s[0],   go_lvl};
+    r_line_s <= {r_line_s[0], line_start_lvl};
+    r_vcnt_a <= vcnt; r_vcnt_b <= r_vcnt_a;
+    r_banks_a <= board_desc.yspr_banks; r_banks_b <= r_banks_a;
+    r_vbl_d <= r_vbl_s[1]; r_go_d <= r_go_s[1]; r_line_d <= r_line_s[1];
 end
+wire r_vbl_start  = r_vbl_s[1] & ~r_vbl_d;
+wire r_go         = r_go_s[1] & ~r_go_d;
+wire r_line_start = r_line_s[1] & ~r_line_d;
+
+wire        fbw_start, fbw_valid, fbw_end, fbw_busy, fbw_dup;
+wire        fbe_req, fbe_ack, fbr_req, fbr_ack;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf;
+wire  [9:0] fbw_x;
+wire  [3:0] fbw_lanes;
+wire  [8:0] fbw_y, fbw_dup_y, fbe_y, fbr_y;
+wire [15:0] fbw_pix, fbr_pix;
+wire        spr_disp_buf, spr_rendering;
+wire  [8:0] disp_ox, disp_oy;
+wire [14:0] yspr_rd_addr; wire [15:0] yspr_rd_q;
+wire  [9:0] rot_rd_addr;  wire [15:0] rot_rd_q;
+yb_ysprite_5305 sprites (
+    .clk(clk_ram), .reset(reset), .num_banks(r_banks_b),
+    .start_req(r_go), .vbl_start(r_vbl_start), .line_start(r_line_start), .vcnt(r_vcnt_b),
+    .sram_addr(yspr_rd_addr), .sram_q(yspr_rd_q),
+    .rot_addr(rot_rd_addr), .rot_q(rot_rd_q),
+    .rom_req(p2_req), .rom_addr(p2_addr), .rom_dout(p2_dout), .rom_ack(p2_ack),
+    .fb_wr_start(fbw_start), .fb_wr_buf(fbw_buf), .fb_wr_x(fbw_x), .fb_wr_lanes(fbw_lanes), .fb_wr_y(fbw_y),
+    .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end), .fb_wr_dup(fbw_dup), .fb_wr_dup_y(fbw_dup_y), .fb_wr_busy(fbw_busy),
+    .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
+    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
+    .disp_buf(spr_disp_buf), .disp_ox(disp_ox), .disp_oy(disp_oy), .rendering(spr_rendering)
+);
+// scan-out: the line buffer holds fb line (vcnt + oy); pixel x reads (x + ox)
+// mod 512. The fetched line is published at hcnt 399 (in hblank), where rd_x
+// is forced to 0 for that purpose. The read runs one pixel ahead of the
+// pixel the framework samples (line buffer, index, palette), hence the -1:
+// tools/board_check.py showed the picture one column early without it.
+reg [8:0] ox_sys, oy_sys;
+always @(posedge clk_sys) if (line_start) begin ox_sys <= disp_ox; oy_sys <= disp_oy; end
+wire [8:0] fbr_xs = hcnt + ox_sys - 9'd1;
+wire [9:0] fbr_x  = (hcnt == 9'd399) ? 10'd0 : {1'b0, fbr_xs};
+wire       fbr_pub = (hcnt == 9'd399);
+wire [8:0] src_line = vcnt + oy_sys;
+yb_fb_if #(.FB_BASE(32'h3000_0000)) fb (
+    .clk(clk_ram), .rst(reset), .hires(1'b0),
+    .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
+    .DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD),
+    .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE),
+    .wr_start(fbw_start), .wr_buf(fbw_buf), .wr_x(fbw_x), .wr_lanes(fbw_lanes), .wr_y(fbw_y), .wr_dup(fbw_dup), .wr_dup_y(fbw_dup_y),
+    .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end), .wr_shadow(1'b0), .wr_busy(fbw_busy),
+    .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
+    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
+    .rd_x(fbr_x), .rd_pix(fbr_pix), .rd_pub_ok(fbr_pub)
+);
+
+// ================================================================ video (M2)
+// Y layer only: a written framebuffer pixel becomes palette index
+// {1, colour[1:0], colour[2], pen[8:0]} (MAME rotate_draw), an empty one
+// the source line number (the scanline colour). The pipeline is line buffer
+// read, index (1 clock after ce_out), palette (2 clocks); blanking and sync
+// are delayed one pixel so the framework samples the RGB of the same pixel.
+// The 16B layer and the 315-5312 mixer arrive in M4.
+reg        ce_pix_d1;
+reg [15:0] spr_pix_r;
+reg [12:0] pal_idx;
+always @(posedge clk_sys) begin
+    ce_pix_d1 <= ce_out;
+    if (ce_out) spr_pix_r <= fbr_pix;
+    if (ce_pix_d1) pal_idx <= (spr_pix_r != 16'hFFFF) ? {1'b1, spr_pix_r[14:13], spr_pix_r[15], spr_pix_r[8:0]} : {4'd0, src_line};
+end
+wire [7:0] pal_r, pal_g, pal_b;
+yb_palette_5242 palette (.clk(clk_sys), .a_addr(ya[13:1]), .a_din(y_dout), .a_be(y_be),
+    .a_we(y_valid && y_wr && y_sel_pal && y_start), .a_dout(pal_q),
+    .b_addr(pal_idx), .b_effects(1'b0), .r(pal_r), .g(pal_g), .b(pal_b));
+reg hb_d, vb_d2, hs_d, vs_d;
+always @(posedge clk_sys) if (ce_out) begin hb_d <= ohblank; vb_d2 <= vblank; hs_d <= ohsync; vs_d <= vsync; end
+assign hb = hb_d; assign vb = vb_d2; assign hs = hs_d; assign vs = vs_d;
+assign r = (hb_d | vb_d2 | !display_enable) ? 8'd0 : pal_r;
+assign g = (hb_d | vb_d2 | !display_enable) ? 8'd0 : pal_g;
+assign b = (hb_d | vb_d2 | !display_enable) ? 8'd0 : pal_b;
 
 // ---------------------------------------------------------------- tie-offs
-assign DDRAM_BURSTCNT = 8'd0;
-assign DDRAM_ADDR     = 29'd0;
-assign DDRAM_RD       = 1'b0;
-assign DDRAM_DIN      = 64'd0;
-assign DDRAM_BE       = 8'd0;
-assign DDRAM_WE       = 1'b0;
-
-assign p2_req = 1'b0; assign p2_addr = '0;
 assign p4_req = 1'b0; assign p4_addr = '0; assign p4_urgent = 1'b0;
 assign p5_req = 1'b0; assign p5_addr = '0;
 assign p6_req = 1'b0; assign p6_addr = '0;

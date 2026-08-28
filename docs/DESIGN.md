@@ -446,6 +446,23 @@ M1 build shows the gradient with short blanks: the game drops /KILL for
 about 12 frames at each attract-mode scene change (frames 269-281 in the
 bench), and kicks /WDCL every other frame, so the MB3773 never fires.
 
+M2 findings (gforce2). The renderer (`rtl/video/yb_ysprite_5305.sv`) is
+pixel-exact against the model on all 20 captured lists (1,621 entries:
+1,384 zoomed, 89 magnified, 779 flipped, 649 bottom-to-top, 921 right-to-
+left) and on a synthetic list with a loop, hidden entries, zoom 0 and height
+0, which the game never produces. The board frame is exact against the
+model rendered from the RTL's own dumps once the scan-out read runs one
+pixel ahead of the framework's sample point (the `-1` in `yb_core`'s
+`fbr_xs`); `tools/board_check.py` found the picture one column early
+without it. Whether that column belongs to the 315-5306 or to the video
+pipeline is settled in M4 against MAME captures, together with the 16B
+origin. The rotation parameters the game writes in attract mode are not an
+identity: `dxx` 1.0, `dyx` 0, `dxy` 1.0, `dyy` 0, so MAME reads one source
+row for the whole screen shifted a pixel per line (the ground plane). M2's
+translation-only scan-out therefore shows the framebuffer, not MAME's
+picture, until M3. A full render of the busiest capture (348 entries) takes
+well under a frame at one pixel per clock; the erase of 512 lines is 0.7 ms.
+
 M0 in full, since it is next. Rewrite `rtl/yb_pkg.sv` from the tables in
 section 3 (clocks, SDRAM and DDR3 map, stream offsets, `board_desc_t`). Trim
 `Arcade-SegaYBoard.sv` to a `yb_core` stub whose port list is the Y Board's
@@ -464,7 +481,7 @@ compile of the stub for the M10K baseline and a clean STA.
 1. Horizontal total and pixel clock: MAME's 342 columns come from `set_size`, not a measured `set_raw`, so they carry no weight against the X Board's 400 at 6.25 MHz. Assume 400; a scope on a real board or a known refresh rate would settle it.
 2. IRQ2 scanline: MAME's 170 is a tuned constant; the real source is the 315-5306. Descriptor byte 7, so it can be tuned per game without a rebuild, and MAME's Q/W/E/R hotkeys give a reference value per game from captures.
 3. Sound crystal: 32.2159 MHz / 8 (MAME) or 16 MHz / 4 (PCB notes). Pitch differs by 0.7%; go with the PCB notes' 4.000 MHz unless a recording says otherwise.
-4. Y framebuffer cadence: when the render starts, when buffers swap, and whether the erase is a full FFFF fill or only inside the clip extents (MAME clears only lines whose extents are not flagged, then fills the whole bitmap anyway). Decide in M2 from what the games write.
+4. Y framebuffer cadence. What Galaxy Force II does (bench `+trace_vid`): sub Y reads 198000 (the rotation swap) at line 223 every other frame, from the IRQ4 handler; sub X writes word 7 of sprite entry 0 at line 223 of every frame, cycling the list head through four lists at entries 0x600, 0x880, 0xB00 and 0xD80, and fills the lists that are not linked in during the following frame (from line 233). So the list the renderer walks is never being written. M2 therefore renders every frame from the live sprite RAM starting at line 226, erases the whole back buffer first (MAME's full FFFF fill), and swaps at the next vblank; the scan-out translation is latched with the render. What the real chips do between the swap read and the vblank is still unknown, and so is whether they render continuously; the visible result would be the same for this game.
 5. The `+27` X offset in the rotation and the 16B origin of 184: MAME calibrations, check against captures.
 6. Shared RAM arbitration between three CPUs (PALs 315-5314..5318): wait-state behaviour unknown; time-slicing is the model.
 7. 16B sprite zoom clamp: MAME clamps hzoom and vzoom to a minimum of 0x40 ("maximum of 8x, not 100% confirmed"); MacDonald's System 16 notes give the valid range as 0..0x3FF with odd behaviour above. Same parameter as the X Board, MAME's value by default. The Y sprite generator only has the zoom 0 to 1 clamp, which is MAME's guard and not a hardware claim.
