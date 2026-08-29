@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare the RTL's frames with a MAME screenshot.
 
-    frame_diff.py verif/board/out verif/golden/gforce2/f300 [--window 4] [--diff out.png] [--layer16b] [--static DIR] [--min N]
+    frame_diff.py verif/board/out verif/golden/gforce2/f300 [--window 4] [--diff out.png] [--layer16b] [--static DIR] [--min N] [--step-ok [--max-far N]]
 
 MAME's frame N (the capture's frame.txt) and the RTL's frame N are not the
 same frame: the two count from different resets and the RTL shows a render
@@ -39,7 +39,14 @@ def layer16b_mask(capdir, setname="gforce2"):
     return [[bfb[y][x] != 0xFFFF and ((bfb[y][x] >> 11) & 0x1e) < (ypri[y][x] & 0x1f) for x in range(320)] for y in range(224)]
 
 
-def main(outdir, capdir, window=4, diff=None, layer16b=False, static=None, minimum=None):
+def near(a, b):
+    # one 5-bit palette step in a single channel: a palette entry the game was
+    # ramping while the frame was scanned (MAME draws from the frame-end palette)
+    d = [abs(x - y) for x, y in zip(a, b)]
+    return sum(1 for v in d if v) == 1 and max(d) <= 9
+
+
+def main(outdir, capdir, window=4, diff=None, layer16b=False, static=None, minimum=None, step_ok=False, max_far=0):
     mame = Image.open(os.path.join(capdir, "frame.png")).convert("RGB")
     mask = layer16b_mask(capdir) if layer16b else [[True] * 320 for _ in range(224)]
     if static:
@@ -59,9 +66,18 @@ def main(outdir, capdir, window=4, diff=None, layer16b=False, static=None, minim
     if best is None:
         print(f"{capdir}: no RTL frames around {n} in {outdir}"); return 1
     ok, f, rtl = best
+    what = ("static " if static else "") + ("16B-layer pixels" if layer16b else "pixels")
+    if step_ok:
+        # --step-ok: one-step differences are counted apart and tolerated; the
+        # pass needs at most max_far pixels differing by more than that
+        nnear = sum(1 for y in range(224) for x in range(320) if mask[y][x] and rtl.getpixel((x, y)) != mame.getpixel((x, y)) and near(rtl.getpixel((x, y)), mame.getpixel((x, y))))
+        far = total - ok - nnear
+        first = next(((x, y, rtl.getpixel((x, y)), mame.getpixel((x, y))) for y in range(224) for x in range(320)
+                      if mask[y][x] and rtl.getpixel((x, y)) != mame.getpixel((x, y)) and not near(rtl.getpixel((x, y)), mame.getpixel((x, y)))), None)
+        print(f"{capdir}: MAME frame {n} vs RTL frame {f} (offset {f - n:+d}): {ok}/{total} {what} equal, {nnear} one palette step off, {far} further (allowed {max_far}); first further difference {first}")
+        return 0 if far <= max_far else 1
     first = next(((x, y, rtl.getpixel((x, y)), mame.getpixel((x, y))) for y in range(224) for x in range(320)
                   if mask[y][x] and rtl.getpixel((x, y)) != mame.getpixel((x, y))), None)
-    what = ("static " if static else "") + ("16B-layer pixels" if layer16b else "pixels")
     print(f"{capdir}: MAME frame {n} vs RTL frame {f} (offset {f - n:+d}): {ok}/{total} {what} equal; first difference {first}")
     if diff:
         d = Image.new("RGB", (320, 224))
@@ -78,5 +94,6 @@ if __name__ == "__main__":
     diff = sys.argv[sys.argv.index("--diff") + 1] if "--diff" in sys.argv else None
     static = sys.argv[sys.argv.index("--static") + 1] if "--static" in sys.argv else None
     minimum = int(sys.argv[sys.argv.index("--min") + 1]) if "--min" in sys.argv else None
-    args = [a for a in args if a != diff and a != str(window) and a != static and a != str(minimum)]
-    raise SystemExit(main(args[0], args[1], window, diff, "--layer16b" in sys.argv, static, minimum))
+    max_far = int(sys.argv[sys.argv.index("--max-far") + 1]) if "--max-far" in sys.argv else 0
+    args = [a for a in args if a != diff and a != str(window) and a != static and a != str(minimum) and a != str(max_far)]
+    raise SystemExit(main(args[0], args[1], window, diff, "--layer16b" in sys.argv, static, minimum, "--step-ok" in sys.argv, max_far))

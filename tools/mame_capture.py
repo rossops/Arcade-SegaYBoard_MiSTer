@@ -27,7 +27,7 @@ def main():
     os.makedirs(out, exist_ok=True)
     env = dict(os.environ, YB_FRAME=str(a.frame), YB_OUT=out)
     cfg = tempfile.mkdtemp()
-    cmd = [a.mame, a.set, "-rompath", ROMPATH, "-window", "-sound", "none", "-nothrottle",
+    cmd = [a.mame, a.set, "-rompath", ROMPATH, "-window", "-sound", "none", "-nothrottle", "-snapview", "native",
            "-skip_gameinfo", "-snapshot_directory", out, "-nvram_directory", tempfile.mkdtemp(),
            "-cfg_directory", cfg, "-autoboot_script", os.path.join(HERE, "mame_capture.lua"),
            "-seconds_to_run", str(a.frame // 60 + 5)]

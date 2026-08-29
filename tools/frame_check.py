@@ -46,7 +46,11 @@ def render_frame(splist, rotbuf, blist, palram, setname="gforce2"):
     return im
 
 
-def main(dumpdir, diff=None, setname="gforce2"):
+def main(dumpdir, diff=None, setname=None):
+    # the set is the golden directory's parent: verif/golden/<set>/f<N>
+    if setname is None:
+        parent = os.path.basename(os.path.dirname(os.path.abspath(dumpdir)))
+        setname = parent if parent in ROMSETS else "gforce2"
     # the rotation buffer MAME drew with is the RAM as the 198000 read tap sees
     # it (before the swap); rotateram.bin at frame end may hold the next frame's
     rotf = "rotateram_swap.bin" if os.path.exists(os.path.join(dumpdir, "rotateram_swap.bin")) else "rotateram.bin"
@@ -73,8 +77,8 @@ def main(dumpdir, diff=None, setname="gforce2"):
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     diff = sys.argv[sys.argv.index("--diff") + 1] if "--diff" in sys.argv else None
+    args = [a for a in sys.argv[1:] if not a.startswith("--") and a != diff]
     rc = 0
     for d in args:
         rc |= main(d, diff)

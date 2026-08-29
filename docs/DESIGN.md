@@ -393,12 +393,35 @@ selected by port E bits 1:0:
 | 3 | rchase | P1 gun X and Y on 0 and 1, P2 gun X and Y on 2 and mux 0; Line of Fire's gun shaping and crosshairs |
 | 4 | glocr360 | mode 1 plus cabinet pitch on 0 and roll on 2, fed from the motor stub |
 
-Unread channels return 0x80. Button lists follow the order MiSTer-devel
-asked for on the X Board: Start, Coin and Pause before Test and Service,
-driving sets with Gas and Brake first, flight sets with the throttle buttons
-next to the stick. DIP switches come straight from MAME's port definitions
-into the `dips` and `dip_default` fields: port G is SW A (coinage) and port
-F is SW B, both read active low with 1 = off.
+Unread channels return 0x80. What M7 made of each mode: the flight games
+take the stick Y as half deflection (0x40..0xC0) and X as three quarters
+(0x20..0xE0), the d-pad standing for full lock; Power Drift's wheel is the
+stick X at three quarters, or the d-pad ramped at 8 per frame to lock and
+16 back to centre so it steers rather than switches, its pedals the Gas
+and Brake buttons or the throttle axis either side of centre; Rail Chase
+is the X Board's Line of Fire arrangement, an absolute lightgun position
+or a gamepad cursor at the OSD speed with crosshairs drawn by the core.
+The flight games (G-LOC, Strike Fighter, R360) also have an OSD "Stick"
+choice, hidden for the others: "Spring return" hands the game the pad's deflection
+as the cabinet's self-centring stick would give it, "Hold position" keeps
+a virtual stick that the pad moves at a rate (full deflection crosses the
+range in about half a second) and that stays where it is left, for
+players who would rather not hold the stick off centre through a turn.
+Power Drift's gear shift is a toggle like MAME's PORT_TOGGLE, one press per
+change, on the GENERAL port's bit 5 which that game reads active high;
+G-LOC's After Burner is bit 0. Rail Chase wires the GENERAL port its own
+way (P1 and P2 triggers, coins, starts, no test bit).
+
+Button lists follow the order MiSTer-devel asked for on the X Board:
+Start, Coin and Pause before Test and Service, driving sets with Gas and
+Brake first, flight sets with the throttle buttons next to the stick. The
+top level maps four MRA layouts (two-button flight for Galaxy Force II,
+three-button flight, driving, guns) onto the core's fixed one, chosen by
+the game id. DIP switches come straight from MAME's port definitions into
+the `dips` and `dip_default` fields: port G is SW A (coinage) and port F is
+SW B, both read active low with 1 = off. Port C (limit switches and
+sensors) reads inactive: high, except for Power Drift, whose sensors MAME
+declares active high, so it reads 0x00.
 
 ### Verification tooling
 The X Board tools carry over as they are: `tools/mame_capture.py` and
@@ -597,15 +620,65 @@ board, and take them out of `references.md`, the `.qsf` and `lint.sh`. Write
 `verif/board/check_m0.sh` as the lint plus tool-test gate. Then a Quartus
 compile of the stub for the M10K baseline and a clean STA.
 
+M7 findings. The other games needed three things the first one had not.
+Power Drift froze on its first screen with no 16B layer: all three CPUs
+sat in `tas; bne` loops on shared-RAM flags, and the shared-RAM watch in
+the bench (`+watch_a`, `+watch_b`) with the same taps in MAME Lua showed
+the lock byte at 0CEB43 set with no owner. Our arbiter served the other
+CPUs between the read and write halves of a read-modify-write cycle, so
+sub Y's `tas` wrote a stale "held" value back over main's release. A CPU
+now keeps the RAM from a read until its next bus cycle (open question 6),
+and Galaxy Force II, which never tripped over it, is unchanged by it. The
+first hardware session found the same class one level up: with the gas
+down, Power Drift froze entering Stage 1, main polling `bclr #2,0CFF12`
+for sub Y's acknowledge, and the byte watch showed sub Y's `0404` landing
+between the read and the write of main's `bclr` and being overwritten
+with the `00` main had read. `bclr` on memory is two plain bus cycles a
+few clocks apart, so a hold that ended when AS negated did not cover it;
+the hold now lasts until the holder's next bus cycle, with the RMW write
+served first and an instruction fetch releasing it. With that Power Drift
+enters Stage 1 and races in the bench, on the same frames as MAME.
+
+G-LOC R360's reset on the way into a fight was a different thing. The
+three-CPU trace comparison (`mame_trace.py` can now press Coin and Start
+and use a saved cfg for the DIPs) put main at 006C16, `move.l d0,(a0)+`
+into 040000, which is ROM space: the game clears 64 KB there before the
+fight. MAME drops writes to ROM; the core's ROM decode only acknowledged
+reads, so main sat on that write with no DTACK, the subs idled on the
+"FIGHTING COURSE" card, and 300 frames later the watchdog reset the
+board, the 000400 fetch the trace showed. Writes into ROM space are now
+acknowledged and dropped on all three CPUs, and the bench logs them
+(`ROMWR`); with that R360's Fighting Only course takes off in the bench
+25 frames after MAME's, no reset. Second,
+MAME composes layout artwork into its screenshots for GAMEL sets; Power
+Drift's gear-shifter overlay sat in the lower right corner of every
+capture until `mame_capture.py` passed `-snapview native`. Third, a game
+that boots one or two frames later than MAME's shows its self-timed
+animations out of phase: Power Drift's kart markers on the track map,
+G-LOC's scrolling HUD tape and blinking LOCK ON, and Power Drift's sky
+gradient, which the game ramps from a counter that does not follow the
+same offset as its sprites (the palette at the end of the RTL's frame has
+the same two colours as MAME's in the gradient entries, a few entries
+apart). `frame_diff --step-ok --max-far N` counts single-step palette
+differences apart and allows N pixels of anything else; the gate uses
+200. With that Power Drift, G-LOC and G-LOC R360 are within a few pixels
+of MAME at frames 150 and 300, R360 at 4 and 1. Power Drift's LIMITSW port
+reads 0xE4, MAME's value for its four active-high sensor bits. The Python
+model chain, run on MAME's own Power Drift dumps, does not reproduce
+MAME's frame (41,597 of 71,680 at frame 150) while the RTL does, so the
+models or the capture's rotation-buffer choice have a Power Drift problem
+the core does not (open question 12).
+
 ## 5. Open questions (MAME is the default answer until hardware says otherwise)
 1. Horizontal total and pixel clock: MAME's 342 columns come from `set_size`, not a measured `set_raw`, so they carry no weight against the X Board's 400 at 6.25 MHz. Assume 400; a scope on a real board or a known refresh rate would settle it.
 2. IRQ2 scanline: MAME's 170 is a tuned constant; the real source is the 315-5306. Descriptor byte 7, so it can be tuned per game without a rebuild, and MAME's Q/W/E/R hotkeys give a reference value per game from captures.
 3. Sound crystal: 32.2159 MHz / 8 (MAME) or 16 MHz / 4 (PCB notes). Pitch differs by 0.7%; go with the PCB notes' 4.000 MHz unless a recording says otherwise.
 4. Y framebuffer cadence. What Galaxy Force II does (bench `+trace_vid`): sub Y reads 198000 (the rotation swap) at line 223 every other frame, from the IRQ4 handler; sub X writes word 7 of sprite entry 0 at line 223 of every frame, cycling the list head through four lists at entries 0x600, 0x880, 0xB00 and 0xD80, and fills the lists that are not linked in during the following frame (from line 233). So the list the renderer walks is never being written. M2 therefore renders every frame from the live sprite RAM starting at line 226, erases the whole back buffer first (MAME's full FFFF fill), and swaps at the next vblank; the scan-out translation is latched with the render. What the real chips do between the swap read and the vblank is still unknown, and so is whether they render continuously; the visible result would be the same for this game.
 5. The `+27` X offset in the rotation and the 16B origin of 184: MAME calibrations. M4's full frames match MAME's screenshots to the pixel with both, so the core is faithful to MAME; whether MAME is faithful to the board is a question for a real PCB.
-6. Shared RAM arbitration between three CPUs (PALs 315-5314..5318): wait-state behaviour unknown; time-slicing is the model.
+6. Shared RAM arbitration between three CPUs (PALs 315-5314..5318): wait-state behaviour unknown; one access per clock in priority order is the model, and since M7 a CPU keeps the RAM from a read until its next bus cycle begins, which makes a `tas` and the two-cycle `bclr`/`bset`/`addq` on memory atomic across CPUs (M7 findings). Whether the PALs stall the others for exactly that long is not known; what is known is that Power Drift's lock and request/acknowledge protocols need it and that MAME, whose instructions are atomic, never sees the race.
 7. 16B sprite zoom clamp: MAME clamps hzoom and vzoom to a minimum of 0x40 ("maximum of 8x, not 100% confirmed"); MacDonald's System 16 notes give the valid range as 0..0x3FF with odd behaviour above. Same parameter as the X Board, MAME's value by default. The Y sprite generator only has the zoom 0 to 1 clamp, which is MAME's guard and not a hardware claim.
 8. MSM6253 timing: the conversion clock is the 315-5296's CKOT output, whose divider is in the CNT register MAME does not emulate, so the delay from the channel write to a valid first read is unknown; MAME makes it instant. Also whether the shift register reloads only on the write. Log the CNT writes in M1 and pick the divider from them.
 9. Deluxe cabinets: what the motor board answers on port C and the ADC once a game starts driving it. MAME never runs the motor Z80, so the stub returns inactive limit switches and centred pitch and roll; if a deluxe set refuses to start on that, the answer is in its motor ROM.
 10. 315-5196 write-back: MAME writes the zoom accumulator and row address into sprite RAM words 5 and 7 as it draws. The core keeps them in a private copy, so a game that reads them back would see the CPU's values; no known game does.
 11. Resolved. Galaxy Force II's Scene Select centred on Scene E in the core and Scene A in MAME because the MSM6253 read path handed the CPU the bit after the shift (M6 findings), so the lever read 0x00 at rest and the carousel scrolled. With the bit latched on the strobe the frame after Start is pixel-exact against MAME's (`check_m6.sh`, frame 400).
+12. The golden models on Power Drift: `frame_check` from MAME's frame-150 dumps gives 41,597 of 71,680 pixels, the whole Y layer wrong, while the RTL matches MAME to within the animation phase. Galaxy Force II's dumps reproduce exactly. Suspects are the capture's choice of rotation buffer (`rotateram_swap.bin` is the RAM as the 198000 read tap sees it, and Power Drift's swap cadence differs) or a list-timing assumption in `ysprite5305.py`. Worth settling before the models are used to argue with the RTL on that game.

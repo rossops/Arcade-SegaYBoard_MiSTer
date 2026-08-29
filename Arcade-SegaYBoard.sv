@@ -130,12 +130,17 @@ localparam CONF_STR = {
     "H0O[9:8],Stick,D-Pad,Analog,Analog+D-Pad;",
     "H0O[24:23],Analog response,Linear,Soft,Softer;",
     "H0O[26:25],Analog range,100%,75%,50%;",
+    "H2O[27],Stick,Spring return,Hold position;",
+    "H1O[12],Gun control,Lightgun,Gamepad;",
+    "H1O[16:13],P1 cursor speed,50,60,70,80,90,100,10,20,30,40;",
+    "H1O[20:17],P2 cursor speed,50,60,70,80,90,100,10,20,30,40;",
+    "H1O[21],Crosshair (gamepad),On,Off;",
     "O[10],Pause when OSD open,Off,On;",
     "-;",
     "DIP;",
     "-;",
     "R[0],Reset;",
-    "J1,Button 1,Button 2,Start,Coin,Pause,Test,Service,Gas,Brake;",
+    "J1,Button 1,Button 2,Button 3,Start,Coin,Pause,Test,Service,Gas,Brake;",
     "V,v",`BUILD_DATE,"-",`BUILD_GIT
 };
 
@@ -234,7 +239,9 @@ wire [24:1] sw_addr;
 wire [15:0] sw_din;
 wire  [1:0] sw_be;
 board_desc_t board_desc;
-assign status_menumask = {15'd0,
+assign status_menumask = {13'd0,
+    !(board_desc.ana_mode == 3'd1 || board_desc.ana_mode == 3'd4),   // bit 2: not a flight game, no hold-position option
+    board_desc.ana_mode != 3'd3,   // bit 1: not a gun game, no gun options
     board_desc.ana_mode == 3'd3};  // bit 0: gun game (Rail Chase), no stick/analog options
 
 yb_rom_loader loader (
@@ -286,20 +293,21 @@ wire [1:0] stick_mode = (status[9:8] == 2'd0) ? 2'd1 : (status[9:8] == 2'd1) ? 2
 
 // Pause: the mapped button or the OSD open with the option set.
 // Button positions follow the MRA's list, which puts the buttons players bind
-// first at the front. Three layouts, chosen from the board descriptor:
-//   driving (Power Drift):              Gas, Brake, A, B, Start, Coin, Pause, Test, Service
-//   flight (Galaxy Force, G-LOC, ...):  A, B, Speed Up, Slow Down, Start, Coin, Pause, Test, Service
-//   the rest (Rail Chase):              A, B, Start, Coin, Pause, Test, Service
+// first at the front. Four layouts, chosen from the game id:
+//   flight, two buttons (Galaxy Force II):   A, B, Speed Up, Slow Down, Start, Coin, Pause, Test, Service
+//   flight, three (G-LOC, Strike Fighter):   A, B, After Burner, Speed Up, Slow Down, Start, Coin, Pause, Test, Service
+//   driving (Power Drift):                   Gas, Brake, Gear Shift, Start, Coin, Pause, Test, Service
+//   guns (Rail Chase):                       Trigger, Start, Coin, Pause, Test, Service
 // The core keeps one fixed layout (4 A, 5 B, 6 Start, 7 Coin, 8 Test,
-// 9 Service, 10 Pause, 11 Gas/Speed Up, 12 Brake/Slow Down).
-wire driving_set = (board_desc.ana_mode == 3'd2);
-wire flight_set  = (board_desc.ana_mode == 3'd0) || (board_desc.ana_mode == 3'd1) || (board_desc.ana_mode == 3'd4);
-wire [1:0] btn_layout = driving_set ? 2'd2 : flight_set ? 2'd1 : 2'd0;
+// 9 Service, 10 Pause, 11 Gas/Speed Up, 12 Brake/Slow Down, 13 C).
+wire [1:0] btn_layout = (board_desc.game_id == 8'd1) ? 2'd2 : (board_desc.game_id == 8'd0) ? 2'd1 :
+                        (board_desc.game_id == 8'd3) ? 2'd0 : 2'd3;
 function automatic [15:0] map_buttons(input [15:0] j, input [1:0] lay);
     case (lay)
-    2'd2:    map_buttons = {3'd0, j[5], j[4], j[10], j[12], j[11], j[9], j[8], j[7], j[6], j[3:0]};
+    2'd3:    map_buttons = {2'd0, j[6], j[8], j[7], j[11], j[13], j[12], j[10], j[9], j[5], j[4], j[3:0]};
+    2'd2:    map_buttons = {2'd0, j[6], j[5], j[4], j[9], j[11], j[10], j[8], j[7], 2'b00, j[3:0]};
     2'd1:    map_buttons = {3'd0, j[7], j[6], j[10], j[12], j[11], j[9], j[8], j[5], j[4], j[3:0]};
-    default: map_buttons = {5'd0, j[8], j[10], j[9], j[7], j[6], j[5], j[4], j[3:0]};
+    default: map_buttons = {5'd0, j[7], j[9], j[8], j[6], j[5], 1'b0, j[4], j[3:0]};
     endcase
 endfunction
 wire [15:0] p1_btn = map_buttons(joystick_0[15:0], btn_layout);
@@ -332,6 +340,7 @@ yb_core core (
     .stick2_x(joystick_l_analog_1[7:0]), .stick2_y(joystick_l_analog_1[15:8]),
     .throttle(joystick_r_analog_0[15:8] ^ 8'h80), .stick_mode(stick_mode),
     .ana_curve(status[24:23]), .ana_range(status[26:25]),
+    .gun_mode(status[12]), .speed1(status[16:13]), .speed2(status[20:17]), .xhair_en(~status[21]), .stick_hold(status[27]),
     .dsw_a(dsw_a), .dsw_b(dsw_b),
     .service(p1_btn[9]), .test(status[7] | p1_btn[8]),
     .coin1(p1_btn[7]), .coin2(p2_btn[7]),

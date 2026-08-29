@@ -52,7 +52,7 @@ module yb_core (
     output reg        nv_modified,
 
     // inputs (active high)
-    input      [15:0] p1_buttons,   // 0 right 1 left 2 down 3 up 4 A 5 B 6 start 7 coin 8 test 9 service 10 pause 11 gas/speed up 12 brake/slow down
+    input      [15:0] p1_buttons,   // 0 right 1 left 2 down 3 up 4 A 5 B 6 start 7 coin 8 test 9 service 10 pause 11 gas/speed up 12 brake/slow down 13 C (After Burner, Gear Shift)
     input      [15:0] p2_buttons,   // second controller, same layout (Rail Chase)
     input signed [7:0] stick_x, stick_y,    // MiSTer analog axes, -128..127
     input signed [7:0] stick2_x, stick2_y,  // second controller's stick (Rail Chase P2 gun)
@@ -60,6 +60,10 @@ module yb_core (
     input       [1:0] stick_mode,           // 0 analog, 1 d-pad, 2 both
     input       [1:0] ana_curve,            // OSD analog response: 0 linear, 1 soft, 2 softer
     input       [1:0] ana_range,            // OSD analog range: 0 100%, 1 75%, 2 50%
+    input             gun_mode,             // Rail Chase: 0 lightgun (absolute stick), 1 gamepad cursor
+    input       [3:0] speed1, speed2,       // cursor speeds (OSD values 0..9)
+    input             xhair_en,             // draw crosshairs in gamepad mode
+    input             stick_hold,           // flight games (modes 1 and 4): the pad moves a held position instead of a spring-return stick
     input       [7:0] dsw_a, dsw_b,         // SW A (port G, coinage), SW B (port F)
     input             service, test,
     input             coin1, coin2,
@@ -157,6 +161,7 @@ wire [15:0] m_dout;
 reg  [15:0] m_din;
 reg         m_ack;
 wire  [2:0] m_fc;
+wire        m_as_n, x_as_n, y_as_n;
 wire        m_reset_out;     // main 68000 RESET instruction -> sub CPUs reset (MAME m68k_reset_callback)
 
 yb_m68k_bus main_cpu (
@@ -164,7 +169,7 @@ yb_m68k_bus main_cpu (
     .ipl(ipl), .halt_n(1'b1),
     .bus_addr(m_addr), .bus_valid(m_valid), .bus_start(m_start),
     .bus_rd(m_rd), .bus_wr(m_wr), .bus_be(m_be),
-    .bus_dout(m_dout), .bus_din(m_din), .bus_ack(m_ack), .reset_out(m_reset_out), .fc(m_fc), .bus_as_n()
+    .bus_dout(m_dout), .bus_din(m_din), .bus_ack(m_ack), .reset_out(m_reset_out), .fc(m_fc), .bus_as_n(m_as_n)
 );
 assign trace_main_addr = m_addr; assign trace_main_start = m_start; assign trace_main_fc = m_fc;
 
@@ -222,18 +227,36 @@ always @(posedge clk_sys) begin
 end
 
 // ---- 315-5296 and the MSM6253 (low byte lane)
-// Port A: P1 (unused on the parents); port B: bit 0 unused, 1 test, 2
-// service, 3 start, 4 button 1, 5 button 2, 6 coin 1, 7 coin 2 (active low);
-// port C: limit switches, inactive; ports D/E/H are outputs; F = SW B, G = SW A.
+// Port A: P1 (unused); port B (MAME's GENERAL, active low): bit 0 After
+// Burner (G-LOC, Strike Fighter), 1 test, 2 service, 3 start, 4 button 1,
+// 5 button 2 or Power Drift's gear shift (active high, a toggle like MAME's
+// PORT_TOGGLE: press to change gear), 6 coin 1, 7 coin 2. Rail Chase wires
+// it differently: 0 P2 trigger, 1 P1 trigger, 2 and 3 service, 4 coin 1,
+// 5 coin 2, 6 P2 start, 7 P1 start (no test bit; the test input goes to
+// bit 2 so the OSD switch still reaches the game). Port C: limit switches
+// and sensors, inactive (high, except Power Drift's four active-high ones);
+// ports D/E/H are outputs; F = SW B, G = SW A.
 wire [7:0] io_q, ph_out;
 wire       io_fmcs;
 wire       adc_d7;
-wire [7:0] in_b = ~{coin2, coin1 | p1_buttons[7], p1_buttons[5], p1_buttons[4],
-                    p1_buttons[6], service | p1_buttons[9], test | p1_buttons[8], 1'b0};
+wire is_pdrift = (board_desc.game_id == 8'd1);
+wire is_rchase = (board_desc.game_id == 8'd3);
+reg  gear_hi, btn_c_d;
+always @(posedge clk_sys) begin
+    btn_c_d <= p1_buttons[13];
+    if (cpu_reset) gear_hi <= 1'b0;
+    else if (p1_buttons[13] && !btn_c_d) gear_hi <= ~gear_hi;
+end
+wire [7:0] in_b_gen = ~{coin2, coin1 | p1_buttons[7], is_pdrift ? ~gear_hi : p1_buttons[5], p1_buttons[4],
+                        p1_buttons[6], service | p1_buttons[9], test | p1_buttons[8], p1_buttons[13] && !is_pdrift};
+wire [7:0] in_b_rc  = ~{p1_buttons[6], p2_buttons[6], coin2 | p2_buttons[7], coin1 | p1_buttons[7],
+                        service | p1_buttons[9], test | service | p1_buttons[8] | p1_buttons[9], p1_buttons[4], p2_buttons[4]};
+wire [7:0] in_b = is_rchase ? in_b_rc : in_b_gen;
+wire [7:0] in_c = is_pdrift ? 8'hE4 : 8'hFF;   // Power Drift: sensors and limit switches (bits 0, 1, 3, 4) active high, the rest unused and low-active
 yb_315_5296 io (
     .clk(clk_sys), .reset(cpu_reset), .cs(m_cs && m_sel_io && m_be[0]), .we(m_wr),
     .addr(ma[6:1]), .din(m_dout[7:0]), .dout(io_q), .fmcs(io_fmcs),
-    .in_a(8'hFF), .in_b(in_b), .in_c(8'hFF), .in_d(8'hFF), .in_e(8'hFF), .in_f(dsw_b), .in_g(dsw_a), .in_h(8'hFF),
+    .in_a(8'hFF), .in_b(in_b), .in_c(in_c), .in_d(8'hFF), .in_e(8'hFF), .in_f(dsw_b), .in_g(dsw_a), .in_h(8'hFF),
     .out_a(), .out_b(), .out_c(), .out_d(), .out_e(pe_out), .out_f(), .out_g(), .out_h(ph_out)
 );
 // port E: 7 /KILL (display enable), 6 CONT, 5 /WDCL, 4 /SRES, 3 XRES, 2 YRES, 1:0 ADC mux
@@ -250,11 +273,21 @@ yb_msm6253 adc (
     .mux0(adc_mux0), .mux1(adc_mux1), .mux2(adc_mux2), .mux3(adc_mux3)
 );
 
-// ---- analog inputs to the ADC channels, per the descriptor's analog mode.
-// Mode 0 (Galaxy Force II): stick X on channel 0 and Y on channel 1, both
-// full range 0x01..0xFF with 0x80 centred (the Y reversal is the
-// descriptor's adc_reverse bit, MAME's PORT_REVERSE), throttle on channel 2.
-// The other modes (flight, driving, guns, R360) arrive with their games in M7.
+// ---- analog inputs to the ADC channels, per the descriptor's analog mode
+// (docs/DESIGN.md, Controls). The seven MAME channels are ADC 0-2 and the
+// 74HC4052 inputs 0-3 on channel 3. Ranges follow MAME's PORT_MINMAX; the
+// Y reversals come from the descriptor's adc_reverse (PORT_REVERSE).
+//   0 Galaxy Force II: stick X on 0, Y on 1, throttle on 2, all 0x01..0xFF
+//   1 G-LOC, Strike Fighter: stick Y on mux 0 (0x40..0xC0), throttle on
+//     mux 1, stick X on mux 2 (0x20..0xE0)
+//   2 Power Drift: brake on mux 0, gas on mux 1 (0x00 released), steering
+//     on mux 2 (0x20..0xE0)
+//   3 Rail Chase: P1 gun X, Y on 0, 1; P2 gun X on 2, Y on mux 0
+//   4 G-LOC R360: mode 1 with the cabinet's pitch on 0 and roll on 2,
+//     centred (the motor stub, open question 9)
+// Unread channels read 0x80.
+wire [2:0] am = board_desc.ana_mode;
+wire flight_mode = (am == 3'd1) || (am == 3'd4);
 wire signed [7:0] sx_s, sy_s, thr_s;
 yb_ana_shape shape_x (.clk(clk_sys), .axis(stick_x), .curve(ana_curve), .range(ana_range), .out(sx_s));
 yb_ana_shape shape_y (.clk(clk_sys), .axis(stick_y), .curve(ana_curve), .range(ana_range), .out(sy_s));
@@ -266,14 +299,95 @@ wire [7:0] thr_fl = p1_buttons[11] ? 8'hFF : p1_buttons[12] ? 8'h00 : throttle_s
 wire use_analog  = (stick_mode != 2'd1);
 wire use_dpad    = (stick_mode != 2'd0);
 wire dpad_active = |p1_buttons[3:0];
-wire [7:0] fr_x  = {~sx_s[7], sx_s[6:0]};   // 0x80 + x
-wire [7:0] fr_y  = {~sy_s[7], sy_s[6:0]};   // up (negative) -> low
-wire [7:0] fr_dx = p1_buttons[0] ? 8'hFF : p1_buttons[1] ? 8'h01 : 8'h80;
-wire [7:0] fr_dy = p1_buttons[3] ? 8'h01 : p1_buttons[2] ? 8'hFF : 8'h80;
-wire [7:0] adc_ch0 = (use_dpad && dpad_active) ? fr_dx : use_analog ? fr_x : 8'h80;
-wire [7:0] adc_ch1 = (use_dpad && dpad_active) ? fr_dy : use_analog ? fr_y : 8'h80;
-wire [7:0] adc_ch2 = thr_fl;
-wire [7:0] adc_mux0 = 8'h80, adc_mux1 = 8'h80, adc_mux2 = 8'h80, adc_mux3 = 8'h80;
+function automatic [3:0] speed_idx(input [3:0] v);   // 1..10
+    speed_idx = (v < 4'd6) ? (v + 4'd5) : (v - 4'd5);
+endfunction
+function automatic signed [7:0] dpad_axis(input neg, input pos, input signed [7:0] stick);
+    dpad_axis = pos ? 8'sd100 : neg ? -8'sd100 : stick;
+endfunction
+function automatic [11:0] cursor_step(input [11:0] c, input signed [7:0] axis, input [3:0] idx);
+    reg signed [13:0] d; reg signed [13:0] n;
+    begin
+        d = ($signed({{6{axis[7]}}, axis}) * $signed({10'd0, idx})) >>> 3;
+        n = $signed({2'b00, c}) + d;
+        cursor_step = (n < 14'sd0) ? 12'd0 : (n > 14'sd4095) ? 12'd4095 : n[11:0];
+    end
+endfunction
+// the stick as a signed deflection: the d-pad is full lock, up and left negative
+wire signed [7:0] in_x = (use_dpad && dpad_active) ? (p1_buttons[0] ? 8'sd127 : p1_buttons[1] ? -8'sd127 : 8'sd0) : use_analog ? sx_s : 8'sd0;
+wire signed [7:0] in_y = (use_dpad && dpad_active) ? (p1_buttons[2] ? 8'sd127 : p1_buttons[3] ? -8'sd127 : 8'sd0) : use_analog ? sy_s : 8'sd0;
+// "hold position" (OSD, flight games only): the pad moves a virtual stick
+// that stays where it is left, full deflection crossing the range in about
+// half a second, so a gamepad can fly G-LOC the way a self-centring stick
+// held off centre does
+wire       hold_on = stick_hold && flight_mode;
+reg [11:0] vst_x, vst_y;
+reg        vbl_vs_d;
+always @(posedge clk_sys) begin
+    vbl_vs_d <= vbl_irq;
+    if (cpu_reset || !hold_on) begin vst_x <= 12'd2048; vst_y <= 12'd2048; end
+    else if (vbl_irq && !vbl_vs_d) begin
+        vst_x <= cursor_step(vst_x, in_x, 4'd8);
+        vst_y <= cursor_step(vst_y, in_y, 4'd8);
+    end
+end
+wire signed [7:0] dx_s = hold_on ? $signed(vst_x[11:4] ^ 8'h80) : in_x;
+wire signed [7:0] dy_s = hold_on ? $signed(vst_y[11:4] ^ 8'h80) : in_y;
+// full range (mode 0): 0x80 + deflection, so 0x01..0xFF with the d-pad
+wire [7:0] fr_x = {~dx_s[7], dx_s[6:0]};
+wire [7:0] fr_y = {~dy_s[7], dy_s[6:0]};
+// flight (modes 1 and 4): Y within 0x40..0xC0 (half), X within 0x20..0xE0 (three quarters)
+wire signed [7:0] dy_h = dy_s >>> 1;
+wire signed [7:0] dx_q = dx_s - (dx_s >>> 2);
+wire [7:0] fl_y = {~dy_h[7], dy_h[6:0]};
+wire [7:0] fl_x = {~dx_q[7], dx_q[6:0]};
+// driving (mode 2): the d-pad ramps the wheel, 8 per frame to full lock and
+// 16 per frame back to centre, so it steers like a wheel and not a switch;
+// the pedals are the buttons or the throttle axis either side of centre
+reg signed [7:0] wheel;
+reg        vbl_w_d;
+always @(posedge clk_sys) begin
+    vbl_w_d <= vbl_irq;
+    if (cpu_reset) wheel <= 8'sd0;
+    else if (vbl_irq && !vbl_w_d) begin
+        if (use_dpad && p1_buttons[0])      wheel <= (wheel > 8'sd119) ? 8'sd127 : wheel + 8'sd8;
+        else if (use_dpad && p1_buttons[1]) wheel <= (wheel < -8'sd119) ? -8'sd127 : wheel - 8'sd8;
+        else                                wheel <= (wheel > 8'sd16) ? wheel - 8'sd16 : (wheel < -8'sd16) ? wheel + 8'sd16 : 8'sd0;
+    end
+end
+wire signed [7:0] st_s = (use_dpad && (p1_buttons[0] || p1_buttons[1] || wheel != 8'sd0)) ? wheel : use_analog ? sx_s : 8'sd0;
+wire signed [7:0] st_q = st_s - (st_s >>> 2);
+wire [7:0] steer = {~st_q[7], st_q[6:0]};
+wire [7:0] gas   = p1_buttons[11] ? 8'hFF : (throttle_s > 8'h80) ? {throttle_s[6:0], 1'b0} : 8'h00;
+wire [7:0] brake = p1_buttons[12] ? 8'hFF : (throttle_s < 8'h80) ? {7'h7F - throttle_s[6:0], 1'b0} : 8'h00;
+// guns (mode 3), one per player, as the X Board's Line of Fire. Lightgun
+// mode: the stick is an absolute position (MiSTer's USB gun support
+// delivers coordinates that way). Gamepad mode: a persistent cursor moved
+// by the stick or D-pad at the OSD speed (values 0..9 stand for 50,60,..100,
+// 10,20,30,40 percent), in 1/16 pixel units, advanced once per frame.
+reg [11:0] cur1_x, cur1_y, cur2_x, cur2_y;
+reg        vbl_gun_d;
+always @(posedge clk_sys) begin
+    vbl_gun_d <= vbl_irq;
+    if (cpu_reset) begin cur1_x <= 12'd2048; cur1_y <= 12'd2048; cur2_x <= 12'd2048; cur2_y <= 12'd2048; end
+    else if (vbl_irq && !vbl_gun_d) begin
+        cur1_x <= cursor_step(cur1_x, dpad_axis(p1_buttons[1], p1_buttons[0], stick_x),  speed_idx(speed1));
+        cur1_y <= cursor_step(cur1_y, dpad_axis(p1_buttons[3], p1_buttons[2], stick_y),  speed_idx(speed1));
+        cur2_x <= cursor_step(cur2_x, dpad_axis(p2_buttons[1], p2_buttons[0], stick2_x), speed_idx(speed2));
+        cur2_y <= cursor_step(cur2_y, dpad_axis(p2_buttons[3], p2_buttons[2], stick2_y), speed_idx(speed2));
+    end
+end
+wire [7:0] gun1_x = gun_mode ? cur1_x[11:4] : {~stick_x[7],  stick_x[6:0]};
+wire [7:0] gun1_y = gun_mode ? cur1_y[11:4] : {~stick_y[7],  stick_y[6:0]};
+wire [7:0] gun2_x = gun_mode ? cur2_x[11:4] : {~stick2_x[7], stick2_x[6:0]};
+wire [7:0] gun2_y = gun_mode ? cur2_y[11:4] : {~stick2_y[7], stick2_y[6:0]};
+wire [7:0] adc_ch0  = (am == 3'd3) ? gun1_x : (am == 3'd0) ? fr_x   : 8'h80;
+wire [7:0] adc_ch1  = (am == 3'd3) ? gun1_y : (am == 3'd0) ? fr_y   : 8'h80;
+wire [7:0] adc_ch2  = (am == 3'd3) ? gun2_x : (am == 3'd0) ? thr_fl : 8'h80;
+wire [7:0] adc_mux0 = (am == 3'd3) ? gun2_y : flight_mode ? fl_y   : (am == 3'd2) ? brake : 8'h80;
+wire [7:0] adc_mux1 = flight_mode ? thr_fl : (am == 3'd2) ? gas   : 8'h80;
+wire [7:0] adc_mux2 = flight_mode ? fl_x   : (am == 3'd2) ? steer : 8'h80;
+wire [7:0] adc_mux3 = 8'h80;
 
 // ================================================================ SUB X
 wire [23:1] x_addr;
@@ -289,7 +403,7 @@ yb_m68k_bus subx_cpu (
     .ipl(ipl), .halt_n(1'b1),
     .bus_addr(x_addr), .bus_valid(x_valid), .bus_start(x_start),
     .bus_rd(x_rd), .bus_wr(x_wr), .bus_be(x_be),
-    .bus_dout(x_dout), .bus_din(x_din), .bus_ack(x_ack), .reset_out(), .fc(x_fc), .bus_as_n()
+    .bus_dout(x_dout), .bus_din(x_din), .bus_ack(x_ack), .reset_out(), .fc(x_fc), .bus_as_n(x_as_n)
 );
 assign trace_subx_addr = x_addr; assign trace_subx_start = x_start; assign trace_subx_fc = x_fc;
 
@@ -370,7 +484,7 @@ yb_m68k_bus suby_cpu (
     .ipl(ipl), .halt_n(1'b1),
     .bus_addr(y_addr), .bus_valid(y_valid), .bus_start(y_start),
     .bus_rd(y_rd), .bus_wr(y_wr), .bus_be(y_be),
-    .bus_dout(y_dout), .bus_din(y_din), .bus_ack(y_ack), .reset_out(), .fc(y_fc), .bus_as_n()
+    .bus_dout(y_dout), .bus_din(y_din), .bus_ack(y_ack), .reset_out(), .fc(y_fc), .bus_as_n(y_as_n)
 );
 assign trace_suby_addr = y_addr; assign trace_suby_start = y_start; assign trace_suby_fc = y_fc;
 
@@ -441,9 +555,23 @@ reg         m_shr_pend, x_shr_pend, y_shr_pend;
 reg         m_shr_got, x_shr_got, y_shr_got;
 reg         m_shr_ack, x_shr_ack, y_shr_ack;
 reg  [15:0] m_shr_q, x_shr_q, y_shr_q;
-wire        shr_pick_m = m_shr_pend;
-wire        shr_pick_x = !m_shr_pend && x_shr_pend;
-wire        shr_pick_y = !m_shr_pend && !x_shr_pend && y_shr_pend;
+// A CPU that has just read keeps the RAM until its next bus cycle starts:
+// if that cycle is the write half of a read-modify-write (tas, whose AS
+// stays low throughout, or bclr/bset/addq on memory, which are two plain
+// cycles a few clocks apart) it is served first, and an instruction fetch
+// releases the hold. Without it Power Drift's lock byte at 0CEB43 was set
+// back by sub Y's stale tas write right after main had released it, and
+// later the acknowledge sub Y wrote into 0CFF12 landed between the read
+// and the write of main's bclr and was overwritten, so the race never
+// started. MAME's instructions are atomic; the board's PALs must span the
+// gap as well. A holder that stalls (reset, halted) is released by a
+// timeout so nobody starves.
+reg   [1:0] shr_hold;   // 0 free, 1 main, 2 sub X, 3 sub Y
+reg   [7:0] shr_hold_t; // clocks since the hold was taken
+wire        hold_free  = (shr_hold == 2'd0);
+wire        shr_pick_m = m_shr_pend && (hold_free || shr_hold == 2'd1);
+wire        shr_pick_x = x_shr_pend && !shr_pick_m && (hold_free || shr_hold == 2'd2);
+wire        shr_pick_y = y_shr_pend && !shr_pick_m && !shr_pick_x && (hold_free || shr_hold == 2'd3);
 wire [14:0] shr_addr = shr_pick_m ? ma[15:1] : shr_pick_x ? xa[15:1] : ya[15:1];
 wire [15:0] shr_din  = shr_pick_m ? m_dout   : shr_pick_x ? x_dout   : y_dout;
 wire  [1:0] shr_be   = shr_pick_m ? m_be     : shr_pick_x ? x_be     : y_be;
@@ -457,8 +585,17 @@ always @(posedge clk_sys) begin
         m_shr_pend <= 1'b0; x_shr_pend <= 1'b0; y_shr_pend <= 1'b0;
         m_shr_got <= 1'b0; x_shr_got <= 1'b0; y_shr_got <= 1'b0;
         m_shr_ack <= 1'b0; x_shr_ack <= 1'b0; y_shr_ack <= 1'b0;
+        shr_hold <= 2'd0; shr_hold_t <= 8'd0;
     end
     else begin
+        shr_hold_t <= (shr_hold == 2'd0) ? 8'd0 : shr_hold_t + 8'd1;
+        if (shr_pick_m && m_rd)      begin shr_hold <= 2'd1; shr_hold_t <= 8'd0; end
+        else if (shr_pick_x && x_rd) begin shr_hold <= 2'd2; shr_hold_t <= 8'd0; end
+        else if (shr_pick_y && y_rd) begin shr_hold <= 2'd3; shr_hold_t <= 8'd0; end
+        else if ((shr_hold == 2'd1 && ((m_start && !m_sel_shr) || (shr_pick_m && m_wr) || cpu_reset)) ||
+                 (shr_hold == 2'd2 && ((x_start && !x_sel_shr) || (shr_pick_x && x_wr) || cpu_reset || m_reset_out || xres)) ||
+                 (shr_hold == 2'd3 && ((y_start && !y_sel_shr) || (shr_pick_y && y_wr) || cpu_reset || m_reset_out || yres)) ||
+                 (shr_hold != 2'd0 && shr_hold_t == 8'd255)) shr_hold <= 2'd0;
         if (m_start && m_sel_shr) m_shr_pend <= 1'b1; else if (shr_pick_m) m_shr_pend <= 1'b0;
         if (x_start && x_sel_shr) x_shr_pend <= 1'b1; else if (shr_pick_x) x_shr_pend <= 1'b0;
         if (y_start && y_sel_shr) y_shr_pend <= 1'b1; else if (shr_pick_y) y_shr_pend <= 1'b0;
@@ -473,7 +610,10 @@ end
 always @* begin
     m_din = 16'hFFFF;
     m_ack = 1'b0;
-    if (m_sel_rom)       begin m_din = m_rom_data; m_ack = m_rom_ack; end
+    // a write into ROM space is acknowledged and dropped: the board's DTACK
+    // logic does not look at R/W and MAME ignores it; G-LOC R360 clears 64 KB
+    // at 040000 on the way into a fight and stalled here until the watchdog
+    if (m_sel_rom)       begin m_din = m_rom_data; m_ack = m_wr ? m_ram_rdy : m_rom_ack; end
     else if (m_sel_shr)  begin m_din = m_shr_q;    m_ack = m_shr_ack; end
     else if (m_sel_lram) begin m_din = m_lram_q;   m_ack = m_ram_rdy; end
     else if (m_sel_mult) begin m_din = m_mult_q;   m_ack = m_ram_rdy; end
@@ -485,7 +625,7 @@ end
 always @* begin
     x_din = 16'hFFFF;
     x_ack = 1'b0;
-    if (x_sel_rom)       begin x_din = x_rom_data; x_ack = x_rom_ack; end
+    if (x_sel_rom)       begin x_din = x_rom_data; x_ack = x_wr ? x_ram_rdy : x_rom_ack; end
     else if (x_sel_shr)  begin x_din = x_shr_q;    x_ack = x_shr_ack; end
     else if (x_sel_yspr) begin x_din = yspr_q;     x_ack = x_ram_rdy; end
     else if (x_sel_lram) begin x_din = x_lram_q;   x_ack = x_ram_rdy; end
@@ -498,7 +638,7 @@ end
 always @* begin
     y_din = 16'hFFFF;
     y_ack = 1'b0;
-    if (y_sel_rom)       begin y_din = y_rom_data; y_ack = y_rom_ack; end
+    if (y_sel_rom)       begin y_din = y_rom_data; y_ack = y_wr ? y_ram_rdy : y_rom_ack; end
     else if (y_sel_shr)  begin y_din = y_shr_q;    y_ack = y_shr_ack; end
     else if (y_sel_lram) begin y_din = y_lram_q;   y_ack = y_ram_rdy; end
     else if (y_sel_rot)  begin y_din = rot_q;      y_ack = y_ram_rdy; end
@@ -627,9 +767,26 @@ yb_palette_5242 palette (.clk(clk_sys), .a_addr(ya[13:1]), .a_din(y_dout), .a_be
     .a_we(y_valid && y_wr && y_sel_pal && y_start), .a_dout(pal_q),
     .b_addr(pal_idx), .b_effects(pal_eff), .r(pal_r), .g(pal_g), .b(pal_b));
 assign hb = ohblank; assign vb = vblank; assign hs = ohsync; assign vs = vsync;
-assign r = (ohblank | vblank | !display_enable) ? 8'd0 : pal_r;
-assign g = (ohblank | vblank | !display_enable) ? 8'd0 : pal_g;
-assign b = (ohblank | vblank | !display_enable) ? 8'd0 : pal_b;
+// crosshair overlay for the gamepad gun mode (P1 white, P2 yellow): the
+// 0..255 positions map to the 320x224 screen as MAME's crosshairs do
+wire        xh_on = xhair_en && gun_mode && (am == 3'd3);
+wire [11:0] xh1_xm = {4'b0000, gun1_x} * 12'd5, xh1_ym = {4'b0000, gun1_y} * 12'd7;
+wire [11:0] xh2_xm = {4'b0000, gun2_x} * 12'd5, xh2_ym = {4'b0000, gun2_y} * 12'd7;
+wire  [9:0] xh1_x = xh1_xm[11:2], xh1_y = {1'b0, xh1_ym[11:3]};   // *1.25 -> 0..318, *0.875 -> 0..223
+wire  [9:0] xh2_x = xh2_xm[11:2], xh2_y = {1'b0, xh2_ym[11:3]};
+function automatic cross_hit(input [8:0] hc, input [8:0] vc, input [9:0] cx, input [9:0] cy);
+    reg [9:0] dx, dy;
+    begin
+        dx = ({1'b0, hc} > cx) ? ({1'b0, hc} - cx) : (cx - {1'b0, hc});
+        dy = ({1'b0, vc} > cy) ? ({1'b0, vc} - cy) : (cy - {1'b0, vc});
+        cross_hit = (dx == 10'd0 && dy <= 10'd3) || (dy == 10'd0 && dx <= 10'd3);
+    end
+endfunction
+wire xh1 = xh_on && cross_hit(hcnt, vcnt, xh1_x, xh1_y);
+wire xh2 = xh_on && cross_hit(hcnt, vcnt, xh2_x, xh2_y);
+assign r = (ohblank | vblank | !display_enable) ? 8'd0 : (xh1 | xh2) ? 8'hFF : pal_r;
+assign g = (ohblank | vblank | !display_enable) ? 8'd0 : (xh1 | xh2) ? 8'hFF : pal_g;
+assign b = (ohblank | vblank | !display_enable) ? 8'd0 : xh1 ? 8'hFF : xh2 ? 8'h00 : pal_b;
 
 // ---------------------------------------------------------------- tie-offs
 assign p7_req = 1'b0; assign p7_addr = '0;

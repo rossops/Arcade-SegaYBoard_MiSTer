@@ -19,6 +19,9 @@ def main():
     ap.add_argument("--seconds", type=float, default=2.0)
     ap.add_argument("--out", required=True)
     ap.add_argument("--mame", default="mame")
+    ap.add_argument("--coin", type=int, help="press Coin 1 for four frames from this frame (Lua alongside the debugger)")
+    ap.add_argument("--starts", help="comma-separated frames at which to press 1P Start for four frames")
+    ap.add_argument("--cfgdir", help="MAME cfg directory to use (a saved DIP setting), default a fresh one")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     raws = {name: os.path.abspath(os.path.join(a.out, f"mame_trace_{name}.raw")) for name, _ in CPUS}
@@ -29,10 +32,16 @@ def main():
         f.write("go\n")
     cmd = [a.mame, a.set, "-rompath", ROMPATH, "-debug", "-debugscript", script,
            "-window", "-sound", "none", "-nothrottle", "-seconds_to_run", str(int(a.seconds)),
-           "-skip_gameinfo", "-nvram_directory", tempfile.mkdtemp(), "-cfg_directory", tempfile.mkdtemp(),
+           "-skip_gameinfo", "-nvram_directory", tempfile.mkdtemp(), "-cfg_directory", a.cfgdir or tempfile.mkdtemp(),
            "-debugger", "osx"]
+    env = dict(os.environ)
+    if a.coin is not None or a.starts:
+        # the presses come from tools/mame_presses.lua, driven by YB_COIN / YB_STARTS
+        cmd += ["-autoboot_script", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mame_presses.lua")]
+        if a.coin is not None: env["YB_COIN"] = str(a.coin)
+        if a.starts: env["YB_STARTS"] = a.starts
     print(" ".join(cmd))
-    subprocess.run(cmd, check=False)
+    subprocess.run(cmd, check=False, env=env)
     for name, _ in CPUS:
         n = 0
         with open(raws[name], errors="replace") as fi, open(os.path.join(a.out, f"trace_{name}_mame.txt"), "w") as fo:

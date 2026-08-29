@@ -41,8 +41,21 @@ convention below, and its git history shows what each decision cost.
   static text shared with MAME); the hardware half (DIPs on the test
   menu, NVRAM across a power cycle, 30 minutes of attract, HDMI vs sim)
   is the user's. Bench dump timing is per layer, see the `+dumpframe`
-  comment in `tb_board.sv`. Not written yet: the analog modes for the
-  games other than Galaxy Force II (M7).
+  comment in `tb_board.sv`. M7 (branch `m7-games`) added the other
+  five games: `tools/romsets.py` holds all 19 sets (clones as
+  alternatives), analog modes 1-4 with the Power Drift gear toggle and the
+  Rail Chase gun cursor in `yb_core`, four MRA button layouts in the top,
+  the shared-RAM arbiter's hold across a CPU's read-modify-write cycle
+  (Power Drift's tas lock deadlocked without it), `mame_capture.py
+  -snapview native` (MAME composes layout artwork into screenshots
+  otherwise) and `frame_diff --step-ok --max-far N`; gate
+  `verif/board/check_m7.sh`. The bench's `+watch_a/+watch_b` (shared RAM)
+  and `+watch_x` (sub X backup RAM) log accesses for chasing CPU
+  handshakes, `+hold`/`+start2..5` drive inputs, `ROMWR` logs writes into
+  ROM space (acknowledged and dropped since R360 stalled on one), and
+  `mame_trace.py --coin/--starts/--cfgdir` traces MAME past inputs. Open:
+  the Python model chain is wrong on Power Drift (OQ12) and the link
+  version of Power Drift (`pdriftl`) is not supported.
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the
   handful that are listed in a comment at the top of the file.

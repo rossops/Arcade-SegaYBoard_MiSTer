@@ -74,6 +74,8 @@ emu.register_frame_done(function()
     dump(suby_space, 0x188000, 0x800, outdir .. "/bspriteram.bin")
     dump(suby_space, 0x190000, 0x2000, outdir .. "/paletteram.bin")
     local f = io.open(outdir .. "/frame.txt", "w"); f:write(tostring(frame) .. "\n"); f:close()
-    manager.machine.video:snapshot()
+    -- the screen device alone: the video manager's snapshot composes the
+    -- layout artwork on top (Power Drift's gear shifter), which is not video
+    manager.machine.screens[":screen"]:snapshot()
     manager.machine:exit()
 end)

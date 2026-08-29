@@ -85,9 +85,10 @@ yb_core core (
     .p6_req(p6_req), .p6_addr(p6_addr), .p6_dout(p6_dout), .p6_ack(p6_ack),
     .p7_req(p7_req), .p7_addr(p7_addr), .p7_dout(p7_dout), .p7_ack(p7_ack),
     .nv_download(1'b0), .nv_upload(1'b0), .nv_wr(1'b0), .nv_rd(1'b0), .nv_addr(13'd0), .nv_din(16'd0), .nv_dout(), .nv_modified(),
-    .p1_buttons({9'd0, p1_start, 6'd0}), .p2_buttons(16'd0),
+    .p1_buttons({9'd0, p1_start, 6'd0} | hold_now), .p2_buttons(16'd0),
     .stick_x(8'sd0), .stick_y(8'sd0), .stick2_x(8'sd0), .stick2_y(8'sd0), .throttle(8'h80),
     .stick_mode(2'd0), .ana_curve(2'd0), .ana_range(2'd0),
+    .gun_mode(1'b0), .speed1(4'd0), .speed2(4'd0), .xhair_en(1'b0), .stick_hold(1'b0),
     .dsw_a(dsw_a), .dsw_b(dsw_b), .service(1'b0), .test(test_sw), .coin1(coin1), .coin2(1'b0),
     .r(r), .g(g), .b(b), .ce_vid(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(al), .audio_r(ar),
@@ -233,6 +234,75 @@ always @(posedge clk_sys) begin
     end
 end
 
+// ---- +watch_a=/+watch_b=<hex>: log every shared-RAM access to those word
+// addresses (0C0000-based, low 16 bits): writes always, reads when the
+// value differs from the last one logged. For chasing CPU handshakes.
+integer watch_a = -1, watch_b = -1;
+initial begin
+    if (!$value$plusargs("watch_a=%h", watch_a)) watch_a = -1;
+    if (!$value$plusargs("watch_b=%h", watch_b)) watch_b = -1;
+end
+reg        w_hit; reg [1:0] w_cpu; reg w_we; reg [1:0] w_be; reg [15:0] w_din, w_addr, w_last_a, w_last_b;
+reg        w_seen_a, w_seen_b;
+initial begin w_seen_a = 1'b0; w_seen_b = 1'b0; end
+always @(posedge clk_sys) begin
+    w_hit <= 1'b0;
+    if (core.shr_pick_m || core.shr_pick_x || core.shr_pick_y) begin
+        if ({16'd0, core.shr_addr, 1'b0} == watch_a || {16'd0, core.shr_addr, 1'b0} == watch_b) begin
+            w_hit <= 1'b1; w_cpu <= core.shr_pick_m ? 2'd0 : core.shr_pick_x ? 2'd1 : 2'd2;
+            w_we <= core.shr_we; w_be <= core.shr_be; w_din <= core.shr_din; w_addr <= {core.shr_addr, 1'b0};
+        end
+    end
+    if (w_hit) begin
+        if (w_we || (w_addr == watch_a[15:0] ? (!w_seen_a || core.shr_q != w_last_a) : (!w_seen_b || core.shr_q != w_last_b))) begin
+            $display("SHR f=%0d line=%0d %s %s 0C%04x be=%b din=%04x q=%04x", frame, core.vcnt,
+                     w_cpu == 2'd0 ? "main" : w_cpu == 2'd1 ? "subx" : "suby", w_we ? "wr" : "rd", w_addr, w_be, w_din, core.shr_q);
+            if (w_addr == watch_a[15:0]) begin w_seen_a <= !w_we; w_last_a <= core.shr_q; end
+            else begin w_seen_b <= !w_we; w_last_b <= core.shr_q; end
+        end
+    end
+end
+
+// ---- +watch_x=<hex>: log sub X's accesses to one word of its backup RAM
+// (byte address 1FC000-1FFFFF), same shape as the shared-RAM watch
+integer watch_x = -1;
+initial begin if (!$value$plusargs("watch_x=%h", watch_x)) watch_x = -1; end
+reg xb_hit, xb_we; reg [1:0] xb_be; reg [15:0] xb_din;
+always @(posedge clk_sys) begin
+    xb_hit <= 1'b0;
+    if (watch_x >= 0 && core.x_valid && core.x_start && core.x_sel_bkup && {11'd0, core.xa[20:1], 1'b0} == watch_x) begin
+        xb_hit <= 1'b1; xb_we <= core.x_wr; xb_be <= core.x_be; xb_din <= core.x_dout;
+    end
+    if (xb_hit) $display("XBK f=%0d line=%0d subx %s %06x be=%b din=%04x q=%04x", frame, core.vcnt, xb_we ? "wr" : "rd", watch_x[23:0], xb_be, xb_din, core.bkup_q);
+end
+
+// ---- +irqlog=F: sub X's program fetches with the IPL it sees, lines 222-225
+// of frame F and F+5 (chasing a missed IRQ4)
+integer irqlog = -1;
+initial begin if (!$value$plusargs("irqlog=%d", irqlog)) irqlog = -1; end
+always @(posedge clk_sys) begin
+    if (irqlog >= 0 && (frame == irqlog || frame == irqlog + 5) && core.vcnt >= 9'd222 && core.vcnt <= 9'd225 && tx_start && tx_fc[1])
+        $display("XF f=%0d line=%0d h=%0d pc=%06x ipl=%0d asn=%b", frame, core.vcnt, core.hcnt, {tx_addr, 1'b0}, core.ipl, core.subx_cpu.bus_as_n);
+end
+
+// ---- +hold=<hex mask> +hold_from=N: hold P1 buttons from frame N, in the
+// core's layout (0 right 1 left 2 down 3 up 4 A 5 B ... 11 gas 12 brake 13 C)
+integer hold_mask = 0, hold_from = -1;
+initial begin
+    if (!$value$plusargs("hold=%h", hold_mask)) hold_mask = 0;
+    if (!$value$plusargs("hold_from=%d", hold_from)) hold_from = -1;
+end
+wire [15:0] hold_now = (hold_from >= 0 && frame >= hold_from) ? hold_mask[15:0] : 16'd0;
+
+// ---- writes into ROM space: acknowledged and dropped by the core; logged
+// (first 8) because a game doing this is worth knowing about
+integer romwr_n = 0;
+always @(posedge clk_sys) begin
+    if (core.m_start && core.m_wr && core.m_sel_rom && romwr_n < 8) begin romwr_n = romwr_n + 1; $display("ROMWR f=%0d line=%0d main %06x", frame, core.vcnt, {core.ma, 1'b0}); end
+    if (core.x_start && core.x_wr && core.x_sel_rom && romwr_n < 8) begin romwr_n = romwr_n + 1; $display("ROMWR f=%0d line=%0d subx %06x", frame, core.vcnt, {core.xa, 1'b0}); end
+    if (core.y_start && core.y_wr && core.y_sel_rom && romwr_n < 8) begin romwr_n = romwr_n + 1; $display("ROMWR f=%0d line=%0d suby %06x", frame, core.vcnt, {core.ya, 1'b0}); end
+end
+
 // ---- +test_from=N: hold the test switch (service mode) from frame N on
 integer test_from = -1;
 initial begin if (!$value$plusargs("test_from=%d", test_from)) test_from = -1; end
@@ -244,7 +314,18 @@ wire coin1 = (coin_frame >= 0) && (frame >= coin_frame) && (frame < coin_frame +
 // ---- +start=N: press P1 Start for four frames from frame N
 integer start_frame = -1;
 initial begin if (!$value$plusargs("start=%d", start_frame)) start_frame = -1; end
-wire p1_start = (start_frame >= 0) && (frame >= start_frame) && (frame < start_frame + 4);
+// +start2..+start5=N: further four-frame Start presses
+integer start2_frame = -1, start3_frame = -1, start4_frame = -1, start5_frame = -1;
+initial begin
+    if (!$value$plusargs("start2=%d", start2_frame)) start2_frame = -1;
+    if (!$value$plusargs("start3=%d", start3_frame)) start3_frame = -1;
+    if (!$value$plusargs("start4=%d", start4_frame)) start4_frame = -1;
+    if (!$value$plusargs("start5=%d", start5_frame)) start5_frame = -1;
+end
+function automatic pressed(input integer at);
+    pressed = (at >= 0) && (frame >= at) && (frame < at + 4);
+endfunction
+wire p1_start = pressed(start_frame) || pressed(start2_frame) || pressed(start3_frame) || pressed(start4_frame) || pressed(start5_frame);
 
 // ---- audio: 48 kHz stereo, raw little-endian 16-bit (audio.raw)
 integer faud;

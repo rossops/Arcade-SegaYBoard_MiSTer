@@ -12,8 +12,12 @@ Galaxy Force II's attract mode runs with the full video path: the three
 315-5196 front sprites and the 315-5312 mixer, pixel-exact against MAME's
 screenshots, with the Z80 sound board (YM2151 and 315-5218) playing, and
 the game plays from the stick (analog or d-pad) with the throttle on two
-buttons or an axis. No game other than Galaxy Force II yet (M7).
-`docs/DESIGN.md` has the hardware
+buttons or an axis. Power Drift, G-LOC Air Battle, G-LOC R360, Rail Chase
+and Strike Fighter boot and run their attract modes on the core, Rail
+Chase and Strike Fighter pixel-exact against MAME, the others within a
+few pixels of animations out of phase by a frame; Power Drift races, G-LOC
+and R360 fly and Rail Chase shoots on hardware, Strike Fighter is still to
+be played (M7). `docs/DESIGN.md` has the hardware
 reference, the architecture and the open questions; `docs/references.md`
 says where every file came from.
 
@@ -26,7 +30,7 @@ says where every file came from.
 | M4 | 315-5196 16B sprites and the 315-5312 mixer | done 2026-08-28, 429/553 M10K, frames pixel-exact vs MAME, attract complete on hardware |
 | M5 | Sound | done 2026-08-28, 441/553 M10K, envelope 0.969 vs MAME, music and samples on hardware |
 | M6 | Hardware bring-up, timing, NVRAM, DIPs, controls | done 2026-08-28, 441/553 M10K, test menu and Scene Select pixel-exact vs MAME, controls and 30 min of attract on hardware |
-| M7 | Power Drift, G-LOC, Strike Fighter, Rail Chase, R360 | |
+| M7 | Power Drift, G-LOC, Strike Fighter, Rail Chase, R360 | done 2026-08-29, 441/553 M10K; all five attract modes match MAME at frames 150 and 300 (Rail Chase and Strike Fighter exact); Power Drift, G-LOC, R360 and Rail Chase played on hardware, Strike Fighter not yet; MRAs for 19 sets |
 
 ## Building and testing
 

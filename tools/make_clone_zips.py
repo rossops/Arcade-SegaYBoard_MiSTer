@@ -34,7 +34,10 @@ def build(key, zipdir, out):
                 count += 1
     missing = needed - {e.rpartition("/")[2] for e in src.namelist()}
     if missing:
-        raise SystemExit(f"{key}: files not in {parent}.zip: {sorted(missing)}")
+        # a clone this collection lacks: say so and leave no half zip behind
+        os.remove(dst_path)
+        print(f"{key}: skipped, files not in {parent}.zip: {sorted(missing)}", file=sys.stderr)
+        return None
     return dst_path, count
 
 
