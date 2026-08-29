@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Board-level video self-consistency: render the Python model from the
-RTL's own RAM dumps (tb +dumpframe=N: sprite RAM and rotation buffer at the
-render start of frame N, palette at frame N+1) and require the RTL's frame
-N+1 to be pixel-exact.
+RTL's own RAM dumps (tb +dumpframe=N: the Y list and the rotation buffer
+as the render shown in frame N starts, in frame N-1; the 16B list as its
+copy is taken at line 226 of frame N; the palette at the end of frame N)
+and require the RTL's frame N to be pixel-exact.
 
     board_check.py verif/board/out 100 [gforce2]
 
 The frame is the full chain: Y sprites, the affine scan-out, the 16B
-sprites (from the list snapshotted at the same moment) and the mixer.
+sprites and the mixer.
 """
 import os, sys, zipfile
 from PIL import Image
@@ -36,7 +37,7 @@ def main(outdir, frame, setname="gforce2"):
     yidx, ypri = rt.scanout(fb, rotbuf, W, H)
     bfb = bs.render(blist, brom, rs["bspr_banks"])
     idx, eff = mx.mix(yidx, ypri, bfb)
-    shown = frame + 1
+    shown = frame
     rtl = Image.open(os.path.join(outdir, f"frame_{shown:04d}.ppm")).convert("RGB")
     ok = 0
     first = None
@@ -49,7 +50,7 @@ def main(outdir, frame, setname="gforce2"):
             else:
                 if first is None: first = (x, y, exp, got, hex(idx[y][x]))
                 mism.append((x, y, exp, got))
-    print(f"frame {shown} (rendered from the dump at {frame}): {ok}/{W*H} pixels exact; first mismatch {first}")
+    print(f"frame {shown} (rendered from its own dumps): {ok}/{W*H} pixels exact; first mismatch {first}")
     if os.environ.get("DIFF"):
         im = Image.new("RGB", (W, H))
         bad = set((m[0], m[1]) for m in mism)

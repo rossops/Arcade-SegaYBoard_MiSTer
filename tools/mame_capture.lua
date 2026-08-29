@@ -16,7 +16,12 @@ local function dump(space, base, words, path)
 end
 
 local test_mode = os.getenv("YB_TEST") == "1"
+local test_from = tonumber(os.getenv("YB_TEST_FRAME") or "1")   -- the game wants an edge during the attract
 local test_field = nil
+-- optional presses, for captures of the game in play (verif/board +coin/+start)
+local coin_frame = tonumber(os.getenv("YB_COIN") or "-1")
+local start_frame = tonumber(os.getenv("YB_START") or "-1")
+local coin_field, start_field = nil, nil
 local suby_space = nil
 local rot_tap = nil
 
@@ -31,6 +36,19 @@ emu.register_frame_done(function()
             if not done then dump(suby_space, 0x180000, 0x400, outdir .. "/rotateram_swap.bin") end
         end)
     end
+    if coin_field == nil then
+        local port = manager.machine.ioport.ports[":GENERAL"]
+        coin_field = port and port.fields["Coin 1"] or false
+        start_field = port and port.fields["1 Player Start"] or false
+    end
+    if coin_field and coin_frame >= 0 then
+        if frame >= coin_frame and frame < coin_frame + 4 then coin_field:set_value(1) end
+        if frame == coin_frame + 4 then coin_field:set_value(0) end
+    end
+    if start_field and start_frame >= 0 then
+        if frame >= start_frame and frame < start_frame + 4 then start_field:set_value(1) end
+        if frame == start_frame + 4 then start_field:set_value(0) end
+    end
     if test_mode then
         if test_field == nil then
             local f = io.open(outdir .. "/ports.txt", "w")
@@ -43,7 +61,10 @@ emu.register_frame_done(function()
             f:close()
             if test_field == nil then test_field = false end
         end
-        if test_field then test_field:set_value(1) end
+        -- held from YB_TEST_FRAME on. set_value(1) is "pressed" whatever the
+        -- field's active level; the game only reacts to an edge after its boot,
+        -- so a level held from frame 1 does nothing (the X Board's finding)
+        if test_field and frame >= test_from then test_field:set_value(tonumber(os.getenv("YB_TEST_VAL") or "1")) end
     end
     if done or frame < frame_target then return end
     done = true

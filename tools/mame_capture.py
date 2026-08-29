@@ -18,6 +18,9 @@ def main():
     ap.add_argument("--frame", type=int, default=300)
     ap.add_argument("--out", required=True)
     ap.add_argument("--test", action="store_true", help="service mode on (test switch held)")
+    ap.add_argument("--coin", type=int, help="press Coin 1 for four frames from this frame")
+    ap.add_argument("--test-frame", type=int, default=1, help="with --test: hold the test switch from this frame")
+    ap.add_argument("--start", type=int, help="press 1 Player Start for four frames from this frame")
     ap.add_argument("--mame", default="mame")
     a = ap.parse_args()
     out = os.path.abspath(a.out)
@@ -28,6 +31,9 @@ def main():
            "-skip_gameinfo", "-snapshot_directory", out, "-nvram_directory", tempfile.mkdtemp(),
            "-cfg_directory", cfg, "-autoboot_script", os.path.join(HERE, "mame_capture.lua"),
            "-seconds_to_run", str(a.frame // 60 + 5)]
+    if a.coin is not None: env["YB_COIN"] = str(a.coin)
+    if a.start is not None: env["YB_START"] = str(a.start)
+    env["YB_TEST_FRAME"] = str(a.test_frame)
     if a.test:
         # MAME's generic "Service Mode" toggle is the F2 key; simplest is a
         # cfg file that maps the test switch... use the built-in dip override:

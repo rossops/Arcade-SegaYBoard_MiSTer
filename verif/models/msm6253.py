@@ -18,7 +18,7 @@ class Msm6253:
         ch = n if n < 3 else 3 + self.mux
         v = self.channels[ch]
         if (self.reverse >> ch) & 1:
-            v = 255 - v
+            v = 0xFF if v == 0 else (0x100 - v) & 0xFF   # MAME: (max + min) - value on a 1..FF range
         return v
 
     def write(self, n):

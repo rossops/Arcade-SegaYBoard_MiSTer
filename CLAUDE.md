@@ -34,8 +34,15 @@ convention below, and its git history shows what each decision cost.
   `verif/board/check_m4.sh`. M5 (branch `m5-sound`) wired `yb_soundsys`
   (Z80, YM2151, 315-5218 with the Y Board banking: shift 13, mask F8) to
   the latch NMI, `/SRES` and `/MUTE`; gate `verif/board/check_m5.sh` (PCM
-  vs `segapcm.py`, WAV envelope vs MAME's `mame_coin30.wav`). Not written yet: the sound board wiring (M5), the analog modes for
-  the games other than Galaxy Force II (M7).
+  vs `segapcm.py`, WAV envelope vs MAME's `mame_coin30.wav`). M6 (branch `m6-bringup`) is the
+  bring-up: the simulation half is `verif/board/check_m6.sh` (test menu
+  pixel-exact vs MAME with the switch pressed at frame 200, the Scene
+  Select exact against the model from the board's own dumps, the 16B
+  static text shared with MAME); the hardware half (DIPs on the test
+  menu, NVRAM across a power cycle, 30 minutes of attract, HDMI vs sim)
+  is the user's. Bench dump timing is per layer, see the `+dumpframe`
+  comment in `tb_board.sv`. Not written yet: the analog modes for the
+  games other than Galaxy Force II (M7).
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the
   handful that are listed in a comment at the top of the file.
@@ -50,6 +57,11 @@ convention below, and its git history shows what each decision cost.
   against MAME captures (`tools/mame_capture.py`, `tools/frame_diff.py`).
   Unit benches are not enough for board-level sequencing: an X Board CDC bug
   only showed in the board check.
+- The SMB share's drive spins down during long simulations and has killed a
+  bench run. `tools/keepalive.sh` writes and deletes `DELETE_ME` on the share
+  every 30 s; `make -C verif/board run` starts it for the duration of every
+  run (so the gate scripts are covered). Any other long job on the share
+  (a MAME batch, a Quartus build watched from here) starts it too.
 - Simulation runs on this Mac (Verilator 5, Icarus, cocotb in `verif/.venv`,
   Python 3.12; MAME 0.289 at `/opt/homebrew/bin/mame`; MAME source at
   `~/Code/mame`; merged ROM zips in `/Volumes/roms/Arcade/MAME 0.289 ROMs (merged)/`).

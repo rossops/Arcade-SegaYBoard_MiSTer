@@ -1,7 +1,11 @@
 """MSM6253: a channel write loads the shift register (channel 3 through the
 port E mux, reverse mask per MAME channel), each read shifts one bit out on
 D7. The games read the stick eight times per sample through this path, so
-a bit order or mux slip shows up as an unplayable stick."""
+a bit order or mux slip shows up as an unplayable stick. The bit is sampled
+the way the 68000 sees it: the strobe is one clock at the start of the bus
+cycle and the CPU latches data after DTACK, so D7 is checked on the clock
+after the strobe. Sampling it before the strobe passed a module that shifted
+before the CPU looked, which read a centred stick as 0 on hardware."""
 import random, sys, os
 import cocotb
 from cocotb.clock import Clock
@@ -45,12 +49,13 @@ async def random_ops(dut):
             await RisingEdge(dut.clk)
         else:
             dut.cs.value = 1; dut.we.value = 0; dut.addr.value = rng.randrange(4)
+            await RisingEdge(dut.clk)
+            dut.cs.value = 0
             await ReadOnly()
             got = int(dut.d7.value)
             exp = m.read()
             assert got == exp, f"op {i}: d7 = {got} model {exp}"
             await RisingEdge(dut.clk)
-            dut.cs.value = 0
 
 
 def test_msm6253():

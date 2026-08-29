@@ -88,7 +88,7 @@ yb_core core (
     .p1_buttons({9'd0, p1_start, 6'd0}), .p2_buttons(16'd0),
     .stick_x(8'sd0), .stick_y(8'sd0), .stick2_x(8'sd0), .stick2_y(8'sd0), .throttle(8'h80),
     .stick_mode(2'd0), .ana_curve(2'd0), .ana_range(2'd0),
-    .dsw_a(dsw_a), .dsw_b(dsw_b), .service(1'b0), .test(1'b0), .coin1(coin1), .coin2(1'b0),
+    .dsw_a(dsw_a), .dsw_b(dsw_b), .service(1'b0), .test(test_sw), .coin1(coin1), .coin2(1'b0),
     .r(r), .g(g), .b(b), .ce_vid(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(al), .audio_r(ar),
     .trace_main_addr(tm_addr), .trace_main_start(tm_start), .trace_main_fc(tm_fc),
@@ -155,10 +155,12 @@ end
 // sprite list (first/last line with writes per frame), to place the render
 reg trace_vid; initial trace_vid = $test$plusargs("trace_vid");
 integer ys_first = -1, ys_last = -1, ys_n = 0, bs_first = -1, bs_last = -1, bs_n = 0;
-reg vb_tv_d;
+reg vb_tv_d, rend_d;
 always @(posedge clk_sys) begin
     vb_tv_d <= vb;
     if (trace_vid && core.y_cs && core.y_rd && core.y_sel_rotc) $display("ROTSWAP f=%0d line=%0d", frame, core.vcnt);
+    rend_d <= core.sprites.rendering;
+    if (trace_vid && core.sprites.rendering != rend_d) $display("RENDER %s f=%0d line=%0d", core.sprites.rendering ? "start" : "end", frame, core.vcnt);
     if (trace_vid && core.y_start && core.y_wr && core.y_sel_bspr) begin
         if (bs_first < 0) bs_first = core.vcnt; bs_last = core.vcnt; bs_n = bs_n + 1;
         if (bs_n < 3) $display("BSPRW f=%0d line=%0d a=%04x d=%04x", frame, core.vcnt, {core.ya[11:1], 1'b0}, core.y_dout);
@@ -192,10 +194,16 @@ always @(posedge clk_sys) begin
     vb_rot_d <= vb;
 end
 
-// ---- +dumpframe=N: the renderer's inputs at line 226 of frame N (its start:
-// sprite RAM, the rotation buffer it clips with) and the palette at line 226
-// of frame N+1, when the buffer rendered from them is on screen.
-// tools/board_check.py renders the model from these and compares frame N+1.
+// ---- +dumpframe=N: what frame N was made from. The Y render is kicked at
+// line 226 of frame N-1, erases the back buffer, walks the live list from
+// about line 234 (after sub X's Scene Select list writes at 227) and the
+// buffers swap at line 223, so frame N shows it: the Y list and the
+// rotation buffer (clip and scan-out parameters) are dumped the moment
+// that walk starts. The 16B copy is taken at line 226 of frame N itself
+// and drives its lines, so the 16B list is dumped there; the palette when
+// frame N's last visible line has been scanned, as MAME's frame-end draw
+// sees it. tools/board_check.py renders the model from these and compares
+// frame N.
 integer dumpframe = -1;
 initial begin if (!$value$plusargs("dumpframe=%d", dumpframe)) dumpframe = -1; end
 task automatic dump_ram(input string name, input integer words, input integer which);
@@ -211,21 +219,24 @@ task automatic dump_ram(input string name, input integer words, input integer wh
     end
     $fclose(fd);
 endtask
+reg rend_dump_d;
 always @(posedge clk_sys) begin
-    if (core.line_start && core.vcnt == 9'd226 && dumpframe >= 0) begin
-        if (frame == dumpframe) begin
-            dump_ram("rtl_yspriteram.bin", 32768, 0);
-            dump_ram("rtl_rotbuf.bin", 1024, 1);
-            dump_ram("rtl_bspriteram.bin", 2048, 3);
-            $display("dumped sprite RAM and rotation buffer at frame %0d line 226", frame);
-        end
-        if (frame == dumpframe + 1) begin
-            dump_ram("rtl_paletteram.bin", 8192, 2);
-            $display("dumped palette at frame %0d line 226", frame);
-        end
+    rend_dump_d <= core.sprites.rendering;
+    if (dumpframe >= 1 && frame == dumpframe - 1 && core.sprites.rendering && !rend_dump_d) begin
+        dump_ram("rtl_yspriteram.bin", 32768, 0);
+        dump_ram("rtl_rotbuf.bin", 1024, 1);
+        $display("dumped the Y sprite list and the rotation buffer at frame %0d line %0d, the render start", frame, core.vcnt);
+    end
+    if (dumpframe >= 0 && frame == dumpframe && core.line_start && core.vcnt == 9'd226) begin
+        dump_ram("rtl_bspriteram.bin", 2048, 3);
+        $display("dumped the 16B list at frame %0d line 226, its copy", frame);
     end
 end
 
+// ---- +test_from=N: hold the test switch (service mode) from frame N on
+integer test_from = -1;
+initial begin if (!$value$plusargs("test_from=%d", test_from)) test_from = -1; end
+wire test_sw = (test_from >= 0) && (frame >= test_from);
 // ---- +coin=N: press Coin 1 for four frames from frame N (matches tools/mame_coin.lua)
 integer coin_frame = -1;
 initial begin if (!$value$plusargs("coin=%d", coin_frame)) coin_frame = -1; end
@@ -254,6 +265,10 @@ string fname;
 always @(posedge clk_sys) begin
     vb_d <= vb;
     if (vb && !vb_d) begin
+        if (dumpframe >= 0 && frame == dumpframe) begin       // the last visible line of frame N just ended
+            dump_ram("rtl_paletteram.bin", 8192, 2);
+            $display("dumped the palette at the end of frame %0d", frame);
+        end
         if (ppm_open) begin $fclose(fppm); ppm_open <= 0; end
         frame <= frame + 1;
         if (frame + 1 == max_frames) $finish;

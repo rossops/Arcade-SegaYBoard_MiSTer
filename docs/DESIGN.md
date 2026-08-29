@@ -372,7 +372,7 @@ The descriptor (`board_desc_t` in `yb_pkg.sv`, `descriptor()` in
 | 1 | flags | bit 0 deluxe cabinet (motor board stub answers on port C and the ADC), bit 1 link board present (pdriftl), bit 2 R360 (pitch and roll on ADC 0 and 2); the rest reserved |
 | 2 | Y sprite banks | 512 KB banks, for the `bank % numbanks` wrap: gforce2 8, pdrift 8, rchase 24, gloc and strkfgtr 32 |
 | 3 | 16B sprite banks | 128 KB banks: gforce2, pdrift and rchase 4, gloc and strkfgtr 16 |
-| 4 | ADC reverse mask | bit n = MAME channel n is `255 - value`: gforce2 0x02, gloc and strkfgtr 0x08 |
+| 4 | ADC reverse mask | bit n = MAME channel n is `0x100 - value` (PORT_REVERSE on a 1..FF range): gforce2 0x02, gloc and strkfgtr 0x08 |
 | 5 | PCM bank mask | 0xF8 for every set |
 | 6 | analog mode | see Controls below |
 | 7 | IRQ2 scanline | 170 unless a capture says otherwise (open question 2) |
@@ -539,6 +539,50 @@ cleared by the Z80's read of port 40. The Z80 runs from the 4.000 MHz
 enables of open question 3; a 0.7% pitch difference against MAME's 4.027
 MHz is below what the envelope comparison can see.
 
+M6 findings (gforce2). The test switch pressed at frame 200 brings up the
+game's TEST MODE menu, pixel-exact against MAME's frame 300 with the same
+press (the game wants an edge during the attract; a level held from reset
+does nothing in either MAME or the core, which is what the X Board notes
+had recorded as MAME's Lua not working). The coin and Start reach the game
+through port B and it goes to the Scene Select. Along the way the MSM6253's
+reverse arithmetic was off by one: MAME's `PORT_REVERSE` on a 1..FF range
+is `0x100 - value`, so a centred stick stays 0x80, where `255 - value` had
+left every reversed channel one count deflected. The RTL's and MAME's
+frame counts drift by a frame or two over a few hundred frames (59.64
+against 60 Hz), so a press in the bench has to be placed on the game's
+frame, not MAME's, for animated screens to line up. The Scene Select
+itself does not line up for another reason: MAME enters it with Scene A
+in the centre of the carousel, the core with Scene E, from the first frame
+of the screen and regardless of a one-frame shift of the presses, while
+the text and frames (16B) agree and the model chain reproduces both
+MAME's screenshot from MAME's dumps and the core's frame from the core's.
+It is game state the two runs do not share (open question 11); the lever
+reading is the suspect, since the game says "select by control lever". The
+board check on that screen also taught the bench something. "Select by
+control lever" is 16B text the game blinks, and it rewrites the whole 16B
+list every frame at lines 170-182. The 315-5196 copy is taken at line 226
+and drives that frame's own lines, whereas the Y buffer a frame shows was
+rendered during the previous frame (kicked at 226, walked from about 234
+after sub X's list writes at 227, swapped at 223). The bench had dumped
+everything at line 226 of frame N and compared frame N+1, which is right
+for the Y layer and one frame stale for the 16B one; only static screens
+forgave it. `+dumpframe=N` now dumps the Y list and the rotation buffer as
+the render for frame N starts (in N-1), the 16B list at line 226 of N and
+the palette when N's last visible line has been scanned, and `board_check`
+compares frame N.
+
+The first hardware session found the stick: the ship drifted up and left
+with the stick centred. The MSM6253 shifted its register on the bus
+strobe, which is one clock at the start of the cycle, while the 68000
+latches the data after DTACK several clocks later, so every read handed
+the CPU the next bit and the game assembled `(value << 1) & 0xFF`: 0x80
+became 0x00 on both axes. The unit test had sampled D7 before the strobe
+and passed. The chip now latches the outgoing bit on the strobe before it
+shifts, and the test samples the way the CPU does. With that the Scene
+Select is pixel-exact against MAME's frame 400, carousel included, which
+closes open question 11. Any register that changes state on a read has to
+be checked this way, at the CPU's latch point, not the strobe's.
+
 M0 in full, since it is next. Rewrite `rtl/yb_pkg.sv` from the tables in
 section 3 (clocks, SDRAM and DDR3 map, stream offsets, `board_desc_t`). Trim
 `Arcade-SegaYBoard.sv` to a `yb_core` stub whose port list is the Y Board's
@@ -564,3 +608,4 @@ compile of the stub for the M10K baseline and a clean STA.
 8. MSM6253 timing: the conversion clock is the 315-5296's CKOT output, whose divider is in the CNT register MAME does not emulate, so the delay from the channel write to a valid first read is unknown; MAME makes it instant. Also whether the shift register reloads only on the write. Log the CNT writes in M1 and pick the divider from them.
 9. Deluxe cabinets: what the motor board answers on port C and the ADC once a game starts driving it. MAME never runs the motor Z80, so the stub returns inactive limit switches and centred pitch and roll; if a deluxe set refuses to start on that, the answer is in its motor ROM.
 10. 315-5196 write-back: MAME writes the zoom accumulator and row address into sprite RAM words 5 and 7 as it draws. The core keeps them in a private copy, so a game that reads them back would see the CPU's values; no known game does.
+11. Resolved. Galaxy Force II's Scene Select centred on Scene E in the core and Scene A in MAME because the MSM6253 read path handed the CPU the bit after the shift (M6 findings), so the lever read 0x00 at rest and the carousel scrolled. With the bit latched on the strobe the frame after Start is pixel-exact against MAME's (`check_m6.sh`, frame 400).

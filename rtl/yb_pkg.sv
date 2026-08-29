@@ -58,7 +58,7 @@ package yb_pkg;
     //                 bit2 R360 (cabinet pitch and roll on ADC 0 and 2)
     //  byte 2: Y sprite ROM bank count, 512 KB banks (bank % count wrap)
     //  byte 3: 16B sprite ROM bank count, 128 KB banks
-    //  byte 4: ADC reverse mask (bit n: MAME channel n reads 255 - value)
+    //  byte 4: ADC reverse mask (bit n: MAME channel n reads 0x100 - value, PORT_REVERSE)
     //  byte 5: 315-5218 bank mask (0xF8 on every set)
     //  byte 6: bits 2:0 analog mode (0 gforce2, 1 flight gloc/strkfgtr,
     //          2 driving pdrift, 3 guns rchase, 4 R360)

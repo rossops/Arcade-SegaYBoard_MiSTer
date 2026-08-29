@@ -23,10 +23,13 @@ obj_dir/Vtb_board: $(addprefix $(ROOT)/,$(SRCS)) $(EXTRA) main.cpp
 build: obj_dir/Vtb_board
 
 # the SDRAM model reads verif/golden/$(GAME)/<region>.hex (tools/pack_roms.py --hexdir)
+# the share keep-alive (tools/keepalive.sh) runs for the duration of every run
 run: obj_dir/Vtb_board
 	mkdir -p out/verif && rm -f out/frame_*.ppm && ln -sfn $(ROOT)/verif/golden out/verif/golden; \
 	ln -sf $(ROOT)/rtl/cpu/fx68k/microrom.mem out/microrom.mem; ln -sf $(ROOT)/rtl/cpu/fx68k/nanorom.mem out/nanorom.mem; \
-	cd out && ../obj_dir/Vtb_board +frames=$(FRAMES) +dumpframe=$(DUMPFRAME) +coin=$(COIN) +hexdir=verif/golden/$(GAME) $(PLUSARGS)
+	sh $(ROOT)/tools/keepalive.sh $(ROOT) & KA=$$!; \
+	(cd out && ../obj_dir/Vtb_board +frames=$(FRAMES) +dumpframe=$(DUMPFRAME) +coin=$(COIN) +hexdir=verif/golden/$(GAME) $(PLUSARGS)); RC=$$?; \
+	kill $$KA 2>/dev/null; wait $$KA 2>/dev/null; exit $$RC
 
 clean:
 	rm -rf obj_dir out
