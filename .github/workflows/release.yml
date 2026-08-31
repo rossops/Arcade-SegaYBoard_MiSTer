@@ -56,7 +56,7 @@ jobs:
           SUMMARY: ${{ inputs.summary }}
           LAST: ${{ steps.ver.outputs.last }}
         run: |
-          rbf=$(ls releases/*.rbf | head -n 1)
+          rbf=$(ls releases/*.rbf | sort -V | tail -n 1)   # the dated names sort by age; take the newest
           {
             if [ -n "$SUMMARY" ]; then printf '%s\n\n' "$SUMMARY"; fi
             echo "## Core"
