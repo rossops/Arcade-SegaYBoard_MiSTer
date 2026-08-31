@@ -5,6 +5,8 @@ set_global_assignment -name SDC_FILE Arcade-SegaYBoard.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-SegaYBoard.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/yb_pkg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/yb_core.sv
+set_global_assignment -name MIF_FILE       rtl/video/yb_shifter.hex
+set_global_assignment -name SEARCH_PATH    rtl/video
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/yb_video_timing.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/yb_fb_if.sv

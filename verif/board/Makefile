@@ -26,7 +26,7 @@ build: obj_dir/Vtb_board
 # the share keep-alive (tools/keepalive.sh) runs for the duration of every run
 run: obj_dir/Vtb_board
 	mkdir -p out/verif && rm -f out/frame_*.ppm && ln -sfn $(ROOT)/verif/golden out/verif/golden; \
-	ln -sf $(ROOT)/rtl/cpu/fx68k/microrom.mem out/microrom.mem; ln -sf $(ROOT)/rtl/cpu/fx68k/nanorom.mem out/nanorom.mem; \
+	ln -sf $(ROOT)/rtl/cpu/fx68k/microrom.mem out/microrom.mem; ln -sf $(ROOT)/rtl/cpu/fx68k/nanorom.mem out/nanorom.mem; ln -sf $(ROOT)/rtl/video/yb_shifter.hex out/yb_shifter.hex; \
 	sh $(ROOT)/tools/keepalive.sh $(ROOT) & KA=$$!; \
 	(cd out && ../obj_dir/Vtb_board +frames=$(FRAMES) +dumpframe=$(DUMPFRAME) +coin=$(COIN) +hexdir=verif/golden/$(GAME) $(PLUSARGS)); RC=$$?; \
 	kill $$KA 2>/dev/null; wait $$KA 2>/dev/null; exit $$RC

@@ -130,7 +130,8 @@ localparam CONF_STR = {
     "H0O[9:8],Stick,D-Pad,Analog,Analog+D-Pad;",
     "H0O[24:23],Analog response,Linear,Soft,Softer;",
     "H0O[26:25],Analog range,100%,75%,50%;",
-    "H2O[27],Stick,Spring return,Hold position;",
+    "H2O[27],Stick re-center,On,Off;",
+    "H3O[28],Gear indicator,On,Off;",
     "H1O[12],Gun control,Lightgun,Gamepad;",
     "H1O[16:13],P1 cursor speed,50,60,70,80,90,100,10,20,30,40;",
     "H1O[20:17],P2 cursor speed,50,60,70,80,90,100,10,20,30,40;",
@@ -239,7 +240,8 @@ wire [24:1] sw_addr;
 wire [15:0] sw_din;
 wire  [1:0] sw_be;
 board_desc_t board_desc;
-assign status_menumask = {13'd0,
+assign status_menumask = {12'd0,
+    board_desc.ana_mode != 3'd2,   // bit 3: not a driving game, no gear indicator option
     !(board_desc.ana_mode == 3'd1 || board_desc.ana_mode == 3'd4),   // bit 2: not a flight game, no hold-position option
     board_desc.ana_mode != 3'd3,   // bit 1: not a gun game, no gun options
     board_desc.ana_mode == 3'd3};  // bit 0: gun game (Rail Chase), no stick/analog options
@@ -340,7 +342,7 @@ yb_core core (
     .stick2_x(joystick_l_analog_1[7:0]), .stick2_y(joystick_l_analog_1[15:8]),
     .throttle(joystick_r_analog_0[15:8] ^ 8'h80), .stick_mode(stick_mode),
     .ana_curve(status[24:23]), .ana_range(status[26:25]),
-    .gun_mode(status[12]), .speed1(status[16:13]), .speed2(status[20:17]), .xhair_en(~status[21]), .stick_hold(status[27]),
+    .gun_mode(status[12]), .speed1(status[16:13]), .speed2(status[20:17]), .xhair_en(~status[21]), .stick_hold(status[27]), .shifter_en(~status[28]),
     .dsw_a(dsw_a), .dsw_b(dsw_b),
     .service(p1_btn[9]), .test(status[7] | p1_btn[8]),
     .coin1(p1_btn[7]), .coin2(p2_btn[7]),

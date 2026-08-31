@@ -88,7 +88,7 @@ yb_core core (
     .p1_buttons({9'd0, p1_start, 6'd0} | hold_now), .p2_buttons(16'd0),
     .stick_x(8'sd0), .stick_y(8'sd0), .stick2_x(8'sd0), .stick2_y(8'sd0), .throttle(8'h80),
     .stick_mode(2'd0), .ana_curve(2'd0), .ana_range(2'd0),
-    .gun_mode(1'b0), .speed1(4'd0), .speed2(4'd0), .xhair_en(1'b0), .stick_hold(1'b0),
+    .gun_mode(1'b0), .speed1(4'd0), .speed2(4'd0), .xhair_en(1'b0), .stick_hold(1'b0), .shifter_en(shifter_sw),
     .dsw_a(dsw_a), .dsw_b(dsw_b), .service(1'b0), .test(test_sw), .coin1(coin1), .coin2(1'b0),
     .r(r), .g(g), .b(b), .ce_vid(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(al), .audio_r(ar),
@@ -302,6 +302,10 @@ always @(posedge clk_sys) begin
     if (core.x_start && core.x_wr && core.x_sel_rom && romwr_n < 8) begin romwr_n = romwr_n + 1; $display("ROMWR f=%0d line=%0d subx %06x", frame, core.vcnt, {core.xa, 1'b0}); end
     if (core.y_start && core.y_wr && core.y_sel_rom && romwr_n < 8) begin romwr_n = romwr_n + 1; $display("ROMWR f=%0d line=%0d suby %06x", frame, core.vcnt, {core.ya, 1'b0}); end
 end
+
+// ---- +shifter: enable the gear indicator overlay (off for the gates: the
+// MAME captures use the native view, which has no artwork)
+reg shifter_sw; initial shifter_sw = $test$plusargs("shifter");
 
 // ---- +test_from=N: hold the test switch (service mode) from frame N on
 integer test_from = -1;

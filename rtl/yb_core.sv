@@ -64,6 +64,7 @@ module yb_core (
     input       [3:0] speed1, speed2,       // cursor speeds (OSD values 0..9)
     input             xhair_en,             // draw crosshairs in gamepad mode
     input             stick_hold,           // flight games (modes 1 and 4): the pad moves a held position instead of a spring-return stick
+    input             shifter_en,           // driving games: draw the gear indicator (MAME's pdrift.lay shifter) in the corner
     input       [7:0] dsw_a, dsw_b,         // SW A (port G, coinage), SW B (port F)
     input             service, test,
     input             coin1, coin2,
@@ -341,21 +342,26 @@ wire signed [7:0] dy_h = dy_s >>> 1;
 wire signed [7:0] dx_q = dx_s - (dx_s >>> 2);
 wire [7:0] fl_y = {~dy_h[7], dy_h[6:0]};
 wire [7:0] fl_x = {~dx_q[7], dx_q[6:0]};
-// driving (mode 2): the d-pad ramps the wheel, 8 per frame to full lock and
-// 16 per frame back to centre, so it steers like a wheel and not a switch;
+// driving (mode 2): the wheel slews toward the pad at 6 counts a frame
+// (about 0.4 s lock to lock, near MAME's keyboard ramp), because a real
+// wheel has travel and an instant thumbstick map steered like ice skates;
 // the pedals are the buttons or the throttle axis either side of centre
 reg signed [7:0] wheel;
 reg        vbl_w_d;
+wire signed [7:0] wheel_tgt = (use_dpad && p1_buttons[0]) ? 8'sd127 :
+                              (use_dpad && p1_buttons[1]) ? -8'sd127 :
+                              use_analog ? sx_s : 8'sd0;
+wire signed [8:0] wheel_d = {wheel_tgt[7], wheel_tgt} - {wheel[7], wheel};
 always @(posedge clk_sys) begin
     vbl_w_d <= vbl_irq;
     if (cpu_reset) wheel <= 8'sd0;
     else if (vbl_irq && !vbl_w_d) begin
-        if (use_dpad && p1_buttons[0])      wheel <= (wheel > 8'sd119) ? 8'sd127 : wheel + 8'sd8;
-        else if (use_dpad && p1_buttons[1]) wheel <= (wheel < -8'sd119) ? -8'sd127 : wheel - 8'sd8;
-        else                                wheel <= (wheel > 8'sd16) ? wheel - 8'sd16 : (wheel < -8'sd16) ? wheel + 8'sd16 : 8'sd0;
+        if (wheel_d > 9'sd6)       wheel <= wheel + 8'sd6;
+        else if (wheel_d < -9'sd6) wheel <= wheel - 8'sd6;
+        else                       wheel <= wheel_tgt;
     end
 end
-wire signed [7:0] st_s = (use_dpad && (p1_buttons[0] || p1_buttons[1] || wheel != 8'sd0)) ? wheel : use_analog ? sx_s : 8'sd0;
+wire signed [7:0] st_s = wheel;
 wire signed [7:0] st_q = st_s - (st_s >>> 2);
 wire [7:0] steer = {~st_q[7], st_q[6:0]};
 wire [7:0] gas   = p1_buttons[11] ? 8'hFF : (throttle_s > 8'h80) ? {throttle_s[6:0], 1'b0} : 8'h00;
@@ -767,6 +773,32 @@ yb_palette_5242 palette (.clk(clk_sys), .a_addr(ya[13:1]), .a_din(y_dout), .a_be
     .a_we(y_valid && y_wr && y_sel_pal && y_start), .a_dout(pal_q),
     .b_addr(pal_idx), .b_effects(pal_eff), .r(pal_r), .g(pal_g), .b(pal_b));
 assign hb = ohblank; assign vb = vblank; assign hs = ohsync; assign vs = vsync;
+// gear indicator for the driving games, MAME's pdrift.lay shifter drawn
+// from its geometry: 16x30 at (303, 193), the knob at the top in low gear,
+// blended at 5/8 for the layout's 0.6 alpha. rtl/video/yb_shifter.hex holds
+// the two states' colour indices, state 1 (high gear) in the second half.
+reg  [3:0] shif_rom [0:959];
+initial $readmemh("yb_shifter.hex", shif_rom);
+wire       shif_box = shifter_en && (am == 3'd2) && hcnt >= 9'd303 && hcnt <= 9'd318 && vcnt >= 9'd193 && vcnt <= 9'd222;
+wire [9:0] shif_off = ({1'b0, vcnt} - 10'd193) * 10'd16 + ({1'b0, hcnt} - 10'd303);
+wire [9:0] shif_a   = (gear_hi ? 10'd480 : 10'd0) + shif_off;
+reg  [3:0] shif_q;
+always @(posedge clk_sys) shif_q <= shif_rom[shif_a < 10'd960 ? shif_a : 10'd0];
+reg  [7:0] shif_r, shif_g, shif_b;
+always @* begin
+    case (shif_q)
+        4'd2:    begin shif_r = 8'd36;  shif_g = 8'd43;  shif_b = 8'd51;  end   // panel
+        4'd3:    begin shif_r = 8'd112; shif_g = 8'd120; shif_b = 8'd128; end   // slot
+        4'd4:    begin shif_r = 8'd255; shif_g = 8'd255; shif_b = 8'd102; end   // yellow label
+        4'd5:    begin shif_r = 8'd255; shif_g = 8'd255; shif_b = 8'd255; end   // white label
+        default: begin shif_r = 8'd217; shif_g = 8'd102; shif_b = 8'd77;  end   // border and knob
+    endcase
+end
+function automatic [7:0] blend58(input [7:0] ov, input [7:0] gm);
+    reg [10:0] t;
+    begin t = {3'd0, ov} * 11'd5 + {3'd0, gm} * 11'd3; blend58 = t[10:3]; end
+endfunction
+
 // crosshair overlay for the gamepad gun mode (P1 white, P2 yellow): the
 // 0..255 positions map to the 320x224 screen as MAME's crosshairs do
 wire        xh_on = xhair_en && gun_mode && (am == 3'd3);
@@ -784,9 +816,9 @@ function automatic cross_hit(input [8:0] hc, input [8:0] vc, input [9:0] cx, inp
 endfunction
 wire xh1 = xh_on && cross_hit(hcnt, vcnt, xh1_x, xh1_y);
 wire xh2 = xh_on && cross_hit(hcnt, vcnt, xh2_x, xh2_y);
-assign r = (ohblank | vblank | !display_enable) ? 8'd0 : (xh1 | xh2) ? 8'hFF : pal_r;
-assign g = (ohblank | vblank | !display_enable) ? 8'd0 : (xh1 | xh2) ? 8'hFF : pal_g;
-assign b = (ohblank | vblank | !display_enable) ? 8'd0 : xh1 ? 8'hFF : xh2 ? 8'h00 : pal_b;
+assign r = (ohblank | vblank | !display_enable) ? 8'd0 : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_r, pal_r) : pal_r;
+assign g = (ohblank | vblank | !display_enable) ? 8'd0 : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_g, pal_g) : pal_g;
+assign b = (ohblank | vblank | !display_enable) ? 8'd0 : xh1 ? 8'hFF : xh2 ? 8'h00 : shif_box ? blend58(shif_b, pal_b) : pal_b;
 
 // ---------------------------------------------------------------- tie-offs
 assign p7_req = 1'b0; assign p7_addr = '0;

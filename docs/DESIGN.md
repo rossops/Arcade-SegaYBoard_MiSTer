@@ -395,15 +395,21 @@ selected by port E bits 1:0:
 
 Unread channels return 0x80. What M7 made of each mode: the flight games
 take the stick Y as half deflection (0x40..0xC0) and X as three quarters
-(0x20..0xE0), the d-pad standing for full lock; Power Drift's wheel is the
-stick X at three quarters, or the d-pad ramped at 8 per frame to lock and
-16 back to centre so it steers rather than switches, its pedals the Gas
+(0x20..0xE0), the d-pad standing for full lock; Power Drift's wheel slews
+toward the stick X or the d-pad at 6 counts a frame (about 0.4 s lock to
+lock, close to MAME's keyboard ramp), scaled to three quarters, so it
+steers like a wheel with travel rather than ice skates, its pedals the Gas
 and Brake buttons or the throttle axis either side of centre; Rail Chase
 is the X Board's Line of Fire arrangement, an absolute lightgun position
 or a gamepad cursor at the OSD speed with crosshairs drawn by the core.
-The flight games (G-LOC, Strike Fighter, R360) also have an OSD "Stick"
-choice, hidden for the others: "Spring return" hands the game the pad's deflection
-as the cabinet's self-centring stick would give it, "Hold position" keeps
+Power Drift draws MAME's gear indicator (the `pdrift.lay` shifter, 16x30
+at 303, 193, blended at 5/8 as the layout's 0.6 alpha, the knob and label
+following the gear toggle) from `rtl/video/yb_shifter.hex`, generated
+from the layout's geometry; the OSD "Gear indicator" turns it off and is
+hidden for the other games. The flight games (G-LOC, Strike Fighter,
+R360) also have an OSD "Stick re-center"
+choice, hidden for the others: "On" hands the game the pad's deflection
+as the cabinet's self-centring stick would give it, "Off" keeps
 a virtual stick that the pad moves at a rate (full deflection crosses the
 range in about half a second) and that stays where it is left, for
 players who would rather not hold the stick off centre through a turn.
