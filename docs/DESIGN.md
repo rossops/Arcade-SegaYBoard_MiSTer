@@ -164,6 +164,26 @@ rchase 0/1 P1 gun X/Y, 2/3 P2 gun X/Y. The X Board's `ana_mode` descriptor
 byte and `yb_ana_shape` cover the ranges; Line of Fire's gun modes cover
 Rail Chase.
 
+The two flight throttles run opposite ways, which the Speed Up and Slow Down
+buttons have to follow. G-LOC and Strike Fighter clamp the reading to
+0x30..0xC0 and scale it up, so high is fast, the same as the X Board's After
+Burner. Galaxy Force II's sub Y low-passes the reading, takes the low byte of
+`value - 0x80`, negates it and works out a target speed of
+`0x2C0 + 4 * ((0x100 - value) & 0xFF)` (main CPU 001C88 fills shared RAM
+C00CA..C00CD, sub Y 014B00 smooths into F02E.., 009394 turns F033 into the
+speed at F100). So 0x01 is the fastest, 0xFF the slowest, and 0x00 wraps back
+past the slowest. Speed Up must drive the channel low and Slow Down high, and
+the axis has to stop short of 0x00.
+
+Galaxy Force II's buttons drive a virtual lever rather than the ends of the
+channel. The cabinet's throttle has travel and stays where it is left, so
+holding an end and springing back to centre only gave three speeds with
+nothing in between: Speed Up and Slow Down walk the lever four counts a frame,
+about a second from end to end, and it keeps its place when they are released.
+The analog axis overrides the lever whenever it is off centre, so a stick and
+the buttons can share the channel. Same idea as the Power Drift wheel slew and
+the flight games' hold-position stick.
+
 ### 315-5305 Y sprites (back layer)
 Sprite RAM entry, 8 words (from `sega_yboard_sprite_device::draw`):
 
@@ -387,7 +407,7 @@ selected by port E bits 1:0:
 
 | Mode | Games | Channels |
 | --- | --- | --- |
-| 0 | gforce2 | stick X on 0, stick Y on 1 (reversed), throttle on 2 |
+| 0 | gforce2 | stick X on 0, stick Y on 1 (reversed), throttle on 2 (low is fast, see below) |
 | 1 | gloc, strkfgtr | stick Y on mux 0 (0x40-0xC0, reversed), throttle on mux 1, stick X on mux 2 (0x20-0xE0) |
 | 2 | pdrift | brake on mux 0, gas on mux 1, steering on mux 2 (0x20-0xE0) |
 | 3 | rchase | P1 gun X and Y on 0 and 1, P2 gun X and Y on 2 and mux 0; Line of Fire's gun shaping and crosshairs |

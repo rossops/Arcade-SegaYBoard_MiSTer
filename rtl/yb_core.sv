@@ -278,7 +278,8 @@ yb_msm6253 adc (
 // (docs/DESIGN.md, Controls). The seven MAME channels are ADC 0-2 and the
 // 74HC4052 inputs 0-3 on channel 3. Ranges follow MAME's PORT_MINMAX; the
 // Y reversals come from the descriptor's adc_reverse (PORT_REVERSE).
-//   0 Galaxy Force II: stick X on 0, Y on 1, throttle on 2, all 0x01..0xFF
+//   0 Galaxy Force II: stick X on 0, Y on 1, throttle on 2 (low is fast),
+//     all 0x01..0xFF
 //   1 G-LOC, Strike Fighter: stick Y on mux 0 (0x40..0xC0), throttle on
 //     mux 1, stick X on mux 2 (0x20..0xE0)
 //   2 Power Drift: brake on mux 0, gas on mux 1 (0x00 released), steering
@@ -294,9 +295,35 @@ yb_ana_shape shape_x (.clk(clk_sys), .axis(stick_x), .curve(ana_curve), .range(a
 yb_ana_shape shape_y (.clk(clk_sys), .axis(stick_y), .curve(ana_curve), .range(ana_range), .out(sy_s));
 yb_ana_shape shape_t (.clk(clk_sys), .axis(throttle ^ 8'h80), .curve(ana_curve), .range(ana_range), .out(thr_s));
 wire [7:0] throttle_s = thr_s ^ 8'h80;
-// Speed Up / Slow Down hold the throttle at its ends (the X Board's After
-// Burner mapping: high reads as fast)
+// Speed Up / Slow Down hold the throttle at its ends. G-LOC and Strike
+// Fighter read a high value as fast (the X Board's After Burner mapping, and
+// their main CPU scales the reading up from a 0x30..0xC0 clamp), but Galaxy
+// Force II is the other way round: its sub Y turns the reading into a target
+// speed of 0x2C0 + 4 * ((0x100 - value) & 0xFF), so 0x01 is the fastest,
+// 0xFF the slowest, and 0x00 wraps around to slower still. Speed Up on 0xFF
+// therefore slowed the ship and Slow Down on 0x00 did the same thing, which
+// is why both buttons only flickered the engines.
 wire [7:0] thr_fl = p1_buttons[11] ? 8'hFF : p1_buttons[12] ? 8'h00 : throttle_s;
+// Galaxy Force II: the ends swap, and the axis never reaches the 0x00 wrap
+// (full stick would otherwise read as the slowest speed instead of the fastest).
+// The cabinet's throttle is a lever with travel that stays where it is left,
+// so the buttons walk a virtual one four counts a frame, about a second end
+// to end, and it holds its place when they are released -- snapping straight
+// to an end and back gave three speeds and nothing in between. The axis takes
+// over whenever it is off centre, so a stick and the buttons share the lever.
+wire [7:0] axis_gf = (throttle_s == 8'h00) ? 8'h01 : throttle_s;
+reg  [7:0] lever;
+reg        vbl_t_d;
+always @(posedge clk_sys) begin
+    vbl_t_d <= vbl_irq;
+    if (cpu_reset) lever <= 8'h80;
+    else if (vbl_irq && !vbl_t_d) begin
+        if (throttle_s != 8'h80)   lever <= axis_gf;                              // stick off centre
+        else if (p1_buttons[11])   lever <= (lever <= 8'h05) ? 8'h01 : lever - 8'd4;   // Speed Up
+        else if (p1_buttons[12])   lever <= (lever >= 8'hFB) ? 8'hFF : lever + 8'd4;   // Slow Down
+    end
+end
+wire [7:0] thr_gf = lever;
 wire use_analog  = (stick_mode != 2'd1);
 wire use_dpad    = (stick_mode != 2'd0);
 wire dpad_active = |p1_buttons[3:0];
@@ -389,7 +416,7 @@ wire [7:0] gun2_x = gun_mode ? cur2_x[11:4] : {~stick2_x[7], stick2_x[6:0]};
 wire [7:0] gun2_y = gun_mode ? cur2_y[11:4] : {~stick2_y[7], stick2_y[6:0]};
 wire [7:0] adc_ch0  = (am == 3'd3) ? gun1_x : (am == 3'd0) ? fr_x   : 8'h80;
 wire [7:0] adc_ch1  = (am == 3'd3) ? gun1_y : (am == 3'd0) ? fr_y   : 8'h80;
-wire [7:0] adc_ch2  = (am == 3'd3) ? gun2_x : (am == 3'd0) ? thr_fl : 8'h80;
+wire [7:0] adc_ch2  = (am == 3'd3) ? gun2_x : (am == 3'd0) ? thr_gf : 8'h80;
 wire [7:0] adc_mux0 = (am == 3'd3) ? gun2_y : flight_mode ? fl_y   : (am == 3'd2) ? brake : 8'h80;
 wire [7:0] adc_mux1 = flight_mode ? thr_fl : (am == 3'd2) ? gas   : 8'h80;
 wire [7:0] adc_mux2 = flight_mode ? fl_x   : (am == 3'd2) ? steer : 8'h80;
