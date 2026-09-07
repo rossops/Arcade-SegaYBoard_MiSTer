@@ -51,8 +51,9 @@ def main(dumpdir, diff=None, setname=None):
     if setname is None:
         parent = os.path.basename(os.path.dirname(os.path.abspath(dumpdir)))
         setname = parent if parent in ROMSETS else "gforce2"
-    # the rotation buffer MAME drew with is the RAM as the 198000 read tap sees
-    # it (before the swap); rotateram.bin at frame end may hold the next frame's
+    # the rotation buffer MAME drew with: mame_capture.lua takes it at the
+    # first 198000 swap after the frame (the read exchanges the halves);
+    # rotateram.bin at frame end holds the buffer of the frame before
     rotf = "rotateram_swap.bin" if os.path.exists(os.path.join(dumpdir, "rotateram_swap.bin")) else "rotateram.bin"
     im = render_frame(words(os.path.join(dumpdir, "yspriteram.bin")), words(os.path.join(dumpdir, rotf)),
                       words(os.path.join(dumpdir, "bspriteram.bin")), words(os.path.join(dumpdir, "paletteram.bin")), setname)

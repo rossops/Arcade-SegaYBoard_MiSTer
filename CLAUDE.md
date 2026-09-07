@@ -53,9 +53,10 @@ convention below, and its git history shows what each decision cost.
   and `+watch_x` (sub X backup RAM) log accesses for chasing CPU
   handshakes, `+hold`/`+start2..5` drive inputs, `ROMWR` logs writes into
   ROM space (acknowledged and dropped since R360 stalled on one), and
-  `mame_trace.py --coin/--starts/--cfgdir` traces MAME past inputs. Open:
-  the Python model chain is wrong on Power Drift (OQ12) and the link
-  version of Power Drift (`pdriftl`) is not supported.
+  `mame_trace.py --coin/--starts/--cfgdir` traces MAME past inputs. OQ12
+  (the model chain wrong on Power Drift) was the capture dumping the
+  rotation RAM one swap early, fixed 2026-09-07. Open: the link version
+  of Power Drift (`pdriftl`) is not supported.
 - `sys/` is MiSTer-devel's Template, byte for byte. Never edit it; update it by
   copying the template again. Keep `.qsf` deviations from Template.qsf to the
   handful that are listed in a comment at the top of the file.

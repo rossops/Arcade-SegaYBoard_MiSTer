@@ -24,18 +24,27 @@ local start_frame = tonumber(os.getenv("YB_START") or "-1")
 local coin_field, start_field = nil, nil
 local suby_space = nil
 local rot_tap = nil
+local rot_dumped = false   -- the drawn rotation buffer has been written
 
 emu.register_frame_done(function()
     frame = frame + 1
     if rot_tap == nil then
-        -- a read of 198000 swaps the rotation RAM with the buffer the
-        -- scan-out uses; keep the RAM as it is right after each swap (the
-        -- previous buffer) so the pairing can be checked either way
+        -- a read of 198000 exchanges the rotation RAM with the buffer the
+        -- scan-out uses (MAME's rotate_control_r swaps the halves), and a
+        -- read tap runs after the handler, so right after a swap the RAM
+        -- holds the buffer of the frame before. The buffer this frame was
+        -- drawn with comes back into the RAM at the first swap after the
+        -- frame; that is the one worth keeping. Power Drift changes its
+        -- parameters every frame, the other games' attract tables are static.
         suby_space = manager.machine.devices[":suby"].spaces["program"]
         rot_tap = suby_space:install_read_tap(0x198000, 0x19ffff, "yb_rotswap", function(offset, data, mask)
-            if not done then dump(suby_space, 0x180000, 0x400, outdir .. "/rotateram_swap.bin") end
+            if done and not rot_dumped then
+                rot_dumped = true
+                dump(suby_space, 0x180000, 0x400, outdir .. "/rotateram_swap.bin")
+            end
         end)
     end
+    if rot_dumped then manager.machine:exit() end
     if coin_field == nil then
         local port = manager.machine.ioport.ports[":GENERAL"]
         coin_field = port and port.fields["Coin 1"] or false
@@ -77,5 +86,5 @@ emu.register_frame_done(function()
     -- the screen device alone: the video manager's snapshot composes the
     -- layout artwork on top (Power Drift's gear shifter), which is not video
     manager.machine.screens[":screen"]:snapshot()
-    manager.machine:exit()
+    -- exit at the frame after the rotation buffer is in (see the tap above)
 end)

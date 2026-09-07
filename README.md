@@ -23,7 +23,7 @@ YM2151 and a 315-5218 PCM chip.
 | M6 | Hardware bring-up: controls, NVRAM, DIPs, timing | done 2026-08-28, 441/553 M10K, test menu and Scene Select pixel-exact vs MAME, controls and 30 minutes of attract on hardware |
 | M7 | Power Drift, G-LOC, G-LOC R360, Rail Chase, Strike Fighter | done 2026-08-29, 441/553 M10K, all five attract modes match MAME at frames 150 and 300 (Rail Chase and Strike Fighter exact); two shared-RAM arbiter fixes came out of the hardware round |
 | after | Power Drift's gear indicator (MAME's shifter overlay), wheel travel, "Stick re-center" option | done 2026-08-30, 442/553 M10K, confirmed on hardware (v1.1.1) |
-| open | `pdriftl` (the link board), the Power Drift golden-model mismatch (open question 12), Strike Fighter on hardware | see `docs/DESIGN.md` |
+| open | `pdriftl` (the link board), Strike Fighter on hardware | see `docs/DESIGN.md`; the Power Drift golden-model mismatch (open question 12) was a capture bug, settled 2026-09-07 |
 
 ## Fully playable games
 

@@ -690,10 +690,18 @@ differences apart and allows N pixels of anything else; the gate uses
 200. With that Power Drift, G-LOC and G-LOC R360 are within a few pixels
 of MAME at frames 150 and 300, R360 at 4 and 1. Power Drift's LIMITSW port
 reads 0xE4, MAME's value for its four active-high sensor bits. The Python
-model chain, run on MAME's own Power Drift dumps, does not reproduce
-MAME's frame (41,597 of 71,680 at frame 150) while the RTL does, so the
-models or the capture's rotation-buffer choice have a Power Drift problem
-the core does not (open question 12).
+model chain, run on MAME's own Power Drift dumps, did not reproduce
+MAME's frame (41,597 of 71,680 at frame 150) while the RTL did. That was
+the capture, settled on 2026-09-07 (open question 12): MAME's read of
+198000 exchanges the two halves of the rotation RAM, and a read tap runs
+after the handler, so the dump taken at the swap held the buffer of the
+frame before. The four other games hold a static table and no skew
+through the attract, so the stale copy was the right one by luck; Power
+Drift rewrites its parameters every frame. `mame_capture.lua` now takes
+the rotation buffer at the first swap after the frame, and every game's
+frame-150 and frame-300 dumps reproduce MAME's screenshot exactly, as do
+Galaxy Force II's frames 1600, 2600 and 2900 from its rotating demo,
+which the old dump had also got wrong.
 
 ## 5. Open questions (MAME is the default answer until hardware says otherwise)
 1. Horizontal total and pixel clock: MAME's 342 columns come from `set_size`, not a measured `set_raw`, so they carry no weight against the X Board's 400 at 6.25 MHz. Assume 400; a scope on a real board or a known refresh rate would settle it.
@@ -707,4 +715,4 @@ the core does not (open question 12).
 9. Deluxe cabinets: what the motor board answers on port C and the ADC once a game starts driving it. MAME never runs the motor Z80, so the stub returns inactive limit switches and centred pitch and roll; if a deluxe set refuses to start on that, the answer is in its motor ROM.
 10. 315-5196 write-back: MAME writes the zoom accumulator and row address into sprite RAM words 5 and 7 as it draws. The core keeps them in a private copy, so a game that reads them back would see the CPU's values; no known game does.
 11. Resolved. Galaxy Force II's Scene Select centred on Scene E in the core and Scene A in MAME because the MSM6253 read path handed the CPU the bit after the shift (M6 findings), so the lever read 0x00 at rest and the carousel scrolled. With the bit latched on the strobe the frame after Start is pixel-exact against MAME's (`check_m6.sh`, frame 400).
-12. The golden models on Power Drift: `frame_check` from MAME's frame-150 dumps gives 41,597 of 71,680 pixels, the whole Y layer wrong, while the RTL matches MAME to within the animation phase. Galaxy Force II's dumps reproduce exactly. Suspects are the capture's choice of rotation buffer (`rotateram_swap.bin` is the RAM as the 198000 read tap sees it, and Power Drift's swap cadence differs) or a list-timing assumption in `ysprite5305.py`. Worth settling before the models are used to argue with the RTL on that game.
+12. Settled 2026-09-07. The golden models on Power Drift gave 41,597 of 71,680 pixels at frame 150 while the RTL matched MAME. The models and the RTL were both right; the capture dumped the rotation RAM right after the 198000 swap, which in MAME exchanges the halves, so the file held the previous frame's buffer. Dumping at the first swap after the frame gives the drawn buffer and the models reproduce MAME exactly on every game (M7 findings).
