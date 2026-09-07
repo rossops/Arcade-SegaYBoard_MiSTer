@@ -65,6 +65,9 @@ module yb_core (
     input             xhair_en,             // draw crosshairs in gamepad mode
     input             stick_hold,           // flight games (modes 1 and 4): the pad moves a held position instead of a spring-return stick
     input             shifter_en,           // driving games: draw the gear indicator (MAME's pdrift.lay shifter) in the corner
+    input       [2:0] dbg_irq2,             // OSD debug: 0 the descriptor's IRQ2 line, 1..7 fixed lines (see irq2_line_sel)
+    input             dbg_finish,           // OSD debug: a Y sprite render that overruns vblank finishes (frame repeats) instead of being cut short
+    input             dbg_marker,           // OSD debug: timing markers top left (red: Y render overran, yellow: rotation scan-out late, cyan: 16B scan-out late)
     input       [7:0] dsw_a, dsw_b,         // SW A (port G, coinage), SW B (port F)
     input             service, test,
     input             coin1, coin2,
@@ -131,7 +134,17 @@ assign ce_vid = ce_out;
 // at the descriptor's line (MAME 170); IPL4 is vblank, one line wide at 223;
 // IPL6 when both are up. No acknowledge on any of them. All three CPUs see
 // the same lines (MAME update_irqs).
-wire       irq2 = (vcnt == {1'b0, board_desc.irq2_line});
+// the OSD debug page can override the descriptor's IRQ2 line (MAME's tuned
+// 170 is not a measurement; its notes say 150-200 all run Power Drift)
+function automatic [7:0] irq2_line_sel(input [2:0] sel, input [7:0] desc_line);
+    case (sel)
+        3'd1: irq2_line_sel = 8'd150; 3'd2: irq2_line_sel = 8'd160; 3'd3: irq2_line_sel = 8'd180;
+        3'd4: irq2_line_sel = 8'd190; 3'd5: irq2_line_sel = 8'd200; 3'd6: irq2_line_sel = 8'd210;
+        3'd7: irq2_line_sel = 8'd220; default: irq2_line_sel = desc_line;
+    endcase
+endfunction
+wire [7:0] irq2_line = irq2_line_sel(dbg_irq2, board_desc.irq2_line);
+wire       irq2 = (vcnt == {1'b0, irq2_line});
 wire [2:0] ipl  = (irq2 && vbl_irq) ? 3'd6 : vbl_irq ? 3'd4 : irq2 ? 3'd2 : 3'd0;
 
 // ---------------------------------------------------------------- watchdog
@@ -718,7 +731,9 @@ wire  [9:0] fbw_x;
 wire  [3:0] fbw_lanes;
 wire  [8:0] fbw_y, fbw_dup_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix, fbr_pix;
-wire        spr_disp_buf, spr_rendering;
+wire        spr_disp_buf, spr_rendering, spr_overrun;
+reg         r_finish_a, r_finish_b;          // dbg_finish into clk_ram
+always @(posedge clk_ram) begin r_finish_a <= dbg_finish; r_finish_b <= r_finish_a; end
 wire [191:0] disp_rot;
 wire        rq_req, rq_ack; wire [1:0] rq_buf; wire [8:0] rq_y; wire [6:0] rq_xw; wire [63:0] rq_data;
 wire [14:0] yspr_rd_addr; wire [15:0] yspr_rd_q;
@@ -726,6 +741,7 @@ wire  [9:0] rot_rd_addr;  wire [15:0] rot_rd_q;
 yb_ysprite_5305 sprites (
     .clk(clk_ram), .reset(reset), .num_banks(r_banks_b),
     .start_req(r_go), .vbl_start(r_vbl_start), .line_start(r_line_start), .vcnt(r_vcnt_b),
+    .finish_mode(r_finish_b), .overrun(spr_overrun),
     .sram_addr(yspr_rd_addr), .sram_q(yspr_rd_q),
     .rot_addr(rot_rd_addr), .rot_q(rot_rd_q),
     .rom_req(p2_req), .rom_addr(p2_addr), .rom_dout(p2_dout), .rom_ack(p2_ack),
@@ -843,9 +859,32 @@ function automatic cross_hit(input [8:0] hc, input [8:0] vc, input [9:0] cx, inp
 endfunction
 wire xh1 = xh_on && cross_hit(hcnt, vcnt, xh1_x, xh1_y);
 wire xh2 = xh_on && cross_hit(hcnt, vcnt, xh2_x, xh2_y);
-assign r = (ohblank | vblank | !display_enable) ? 8'd0 : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_r, pal_r) : pal_r;
-assign g = (ohblank | vblank | !display_enable) ? 8'd0 : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_g, pal_g) : pal_g;
-assign b = (ohblank | vblank | !display_enable) ? 8'd0 : xh1 ? 8'hFF : xh2 ? 8'h00 : shif_box ? blend58(shif_b, pal_b) : pal_b;
+// debug timing markers, 8x8 blocks along the top left edge, each shown for
+// the frame after the event, so a glitch on the cabinet can be tied to one:
+//   red (4, 4):     the Y sprite render was still running at vblank
+//   yellow (14, 4): the rotation scan-out missed a line's deadline
+//   cyan (24, 4):   the 16B line builder missed a line's deadline
+// spr_overrun is a clk_ram level that changes once per frame at line 223
+// (two flops bring it over); the late counters are clk_ram too and are
+// sampled at line 224, when neither scan-out is running, so they are still.
+reg  ovr_s1, ovr_s2;
+reg  [15:0] rot_late_d, bspr_late_d;
+reg  rot_late_f, bspr_late_f;
+always @(posedge clk_sys) begin
+    ovr_s1 <= spr_overrun; ovr_s2 <= ovr_s1;
+    if (line_start && vcnt == 9'd224) begin
+        rot_late_f  <= (rot_late  != rot_late_d);  rot_late_d  <= rot_late;
+        bspr_late_f <= (bspr_late != bspr_late_d); bspr_late_d <= bspr_late;
+    end
+end
+wire mark_row = dbg_marker && vcnt >= 9'd4 && vcnt <= 9'd11;
+wire mark_r = mark_row && ovr_s2      && hcnt >= 9'd4  && hcnt <= 9'd11;
+wire mark_y = mark_row && rot_late_f  && hcnt >= 9'd14 && hcnt <= 9'd21;
+wire mark_c = mark_row && bspr_late_f && hcnt >= 9'd24 && hcnt <= 9'd31;
+wire mark = mark_r | mark_y | mark_c;
+assign r = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? (mark_c ? 8'h00 : 8'hFF) : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_r, pal_r) : pal_r;
+assign g = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? (mark_r ? 8'h00 : 8'hFF) : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_g, pal_g) : pal_g;
+assign b = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? (mark_c ? 8'hFF : 8'h00) : xh1 ? 8'hFF : xh2 ? 8'h00 : shif_box ? blend58(shif_b, pal_b) : pal_b;
 
 // ---------------------------------------------------------------- tie-offs
 assign p7_req = 1'b0; assign p7_addr = '0;

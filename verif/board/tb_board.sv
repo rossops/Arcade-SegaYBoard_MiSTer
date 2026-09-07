@@ -89,6 +89,7 @@ yb_core core (
     .stick_x(8'sd0), .stick_y(8'sd0), .stick2_x(8'sd0), .stick2_y(8'sd0), .throttle(8'h80),
     .stick_mode(2'd0), .ana_curve(2'd0), .ana_range(2'd0),
     .gun_mode(1'b0), .speed1(4'd0), .speed2(4'd0), .xhair_en(1'b0), .stick_hold(1'b0), .shifter_en(shifter_sw),
+    .dbg_irq2(3'd0), .dbg_finish(finish_sw), .dbg_marker(marker_sw),
     .dsw_a(dsw_a), .dsw_b(dsw_b), .service(1'b0), .test(test_sw), .coin1(coin1), .coin2(1'b0),
     .r(r), .g(g), .b(b), .ce_vid(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(al), .audio_r(ar),
@@ -306,6 +307,8 @@ end
 // ---- +shifter: enable the gear indicator overlay (off for the gates: the
 // MAME captures use the native view, which has no artwork)
 reg shifter_sw; initial shifter_sw = $test$plusargs("shifter");
+reg finish_sw;  initial finish_sw  = $test$plusargs("finish");    // OSD debug: overrunning renders finish, the frame repeats
+reg marker_sw;  initial marker_sw  = $test$plusargs("marker");    // OSD debug: timing marker blocks top left
 
 // ---- +test_from=N: hold the test switch (service mode) from frame N on
 integer test_from = -1;

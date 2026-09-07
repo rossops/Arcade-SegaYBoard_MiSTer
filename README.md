@@ -80,6 +80,20 @@ indicator (MAME's shifter overlay in the lower right corner), and pause
 while the OSD is open. Options that do not apply to the loaded game are
 hidden (the MRA's board descriptor drives the framework's menu mask).
 
+The Debug page is for chasing timing on a cabinet, where a pixel diff
+cannot reach. IRQ2 scanline overrides the MRA's line (MAME's tuned 170)
+with 150 to 220, since the real line is not known and MAME's notes say
+the games run at any of them with different glitches. Sprite render at
+vblank picks what happens when a frame's Y sprites are not finished
+drawing by vblank: cut short and shown (the hardware model), or finished
+and shown a frame late. Timing markers draws small blocks along the top
+left edge on the frame after an event: red when the Y render overran,
+yellow when the rotation scan-out missed a line, cyan when the 16B line
+builder did. In simulation the scan-outs never miss a line on any of the
+five attract modes and Power Drift's demo race renders in at most 100 of
+the 259 lines available, so a block on a cabinet points at the DDR3 or
+SDRAM side rather than the logic.
+
 ## Layout
 
 ```

@@ -38,6 +38,8 @@ module yb_ysprite_5305 (
 
     // timing (clk_ram domain pulses)
     input             start_req,      // one-clk pulse: render the list now
+    input             finish_mode,    // debug: a render still running at vblank finishes and the swap waits (the frame repeats) instead of being cut short
+    output reg        overrun,        // debug: the last vblank found a render still running (level through the frame)
     input             vbl_start,      // one-clk pulse at start of line 223
     input             line_start,     // one-clk pulse at hcnt == 0
     input       [8:0] vcnt,
@@ -194,7 +196,7 @@ always @(posedge clk) begin
     rom_req     <= 1'b0;
     vis_we      <= 1'b0;
     if (reset) begin
-        rs <= R_IDLE; disp_buf <= 1'b0; render_pending <= 1'b0; rendering <= 1'b0;
+        rs <= R_IDLE; disp_buf <= 1'b0; render_pending <= 1'b0; rendering <= 1'b0; overrun <= 1'b0;
         burst_valid <= 1'b0; idx <= 12'd0; next_idx <= 12'd0; wcnt <= 4'd0; icnt <= 5'd0;
         fb_er_req <= 1'b0; did_render <= 1'b0; er_need <= 1'b1; er_line <= 9'd0;
         vis_clr <= 12'd0; vis_clearing <= 1'b0;
@@ -212,16 +214,21 @@ always @(posedge clk) begin
         end
 
         // vblank: swap if a render ran since the last swap, abort a running one
+        // (or, in the debug finish mode, leave it running: it swaps at the
+        // next vblank, and did_render holds the next render off until then)
         if (vbl_start && !erasing) begin
-            if (rendering || did_render) begin
-                disp_buf <= ~disp_buf; er_need <= 1'b1;
-                disp_rot <= rot_r;
+            overrun <= rendering;
+            if (!(rendering && finish_mode)) begin
+                if (rendering || did_render) begin
+                    disp_buf <= ~disp_buf; er_need <= 1'b1;
+                    disp_rot <= rot_r;
+                end
+                did_render <= 1'b0;
+                rendering <= 1'b0;
+                if (rs != R_IDLE && rs != R_ROWWAIT) fb_wr_end <= 1'b1;   // close an open run
+                fb_er_req <= 1'b0;
+                rs <= R_IDLE;
             end
-            did_render <= 1'b0;
-            rendering <= 1'b0;
-            if (rs != R_IDLE && rs != R_ROWWAIT) fb_wr_end <= 1'b1;   // close an open run
-            fb_er_req <= 1'b0;
-            rs <= R_IDLE;
         end
         else case (rs)
         R_IDLE: begin
@@ -229,7 +236,7 @@ always @(posedge clk) begin
                 er_line <= 9'd0; rs <= R_ERASE;
                 vis_clr <= 12'd0; vis_clearing <= 1'b1;
             end
-            else if (render_pending && !fb_wr_busy && !vis_clearing) begin
+            else if (render_pending && !fb_wr_busy && !vis_clearing && !did_render) begin
                 render_pending <= 1'b0;
                 rendering <= 1'b1;
                 did_render <= 1'b1;
