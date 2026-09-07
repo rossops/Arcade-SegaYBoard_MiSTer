@@ -67,7 +67,7 @@ module yb_core (
     input             shifter_en,           // driving games: draw the gear indicator (MAME's pdrift.lay shifter) in the corner
     input       [2:0] dbg_irq2,             // OSD debug: 0 the descriptor's IRQ2 line, 1..7 fixed lines (see irq2_line_sel)
     input             dbg_finish,           // OSD debug: a Y sprite render that overruns vblank finishes (frame repeats) instead of being cut short
-    input             dbg_marker,           // OSD debug: timing markers top left (red: Y render overran, yellow: rotation scan-out late, cyan: 16B scan-out late)
+    input       [1:0] dbg_marker,           // OSD debug: 0 off, 1 timing markers top left (red: Y render overran, yellow: rotation scan-out late, cyan: 16B scan-out late), 2 test: all three lit and a white line on the IRQ2 scanline
     input       [7:0] dsw_a, dsw_b,         // SW A (port G, coinage), SW B (port F)
     input             service, test,
     input             coin1, coin2,
@@ -877,14 +877,18 @@ always @(posedge clk_sys) begin
         bspr_late_f <= (bspr_late != bspr_late_d); bspr_late_d <= bspr_late;
     end
 end
-wire mark_row = dbg_marker && vcnt >= 9'd4 && vcnt <= 9'd11;
-wire mark_r = mark_row && ovr_s2      && hcnt >= 9'd4  && hcnt <= 9'd11;
-wire mark_y = mark_row && rot_late_f  && hcnt >= 9'd14 && hcnt <= 9'd21;
-wire mark_c = mark_row && bspr_late_f && hcnt >= 9'd24 && hcnt <= 9'd31;
-wire mark = mark_r | mark_y | mark_c;
+// the test setting lights all three and draws the IRQ2 scanline in white,
+// proving the OSD bits arrive and showing where the IRQ2 switch put the line
+wire mark_test = (dbg_marker == 2'd2);
+wire mark_row = (dbg_marker != 2'd0) && vcnt >= 9'd4 && vcnt <= 9'd11;
+wire mark_r = mark_row && (ovr_s2      || mark_test) && hcnt >= 9'd4  && hcnt <= 9'd11;
+wire mark_y = mark_row && (rot_late_f  || mark_test) && hcnt >= 9'd14 && hcnt <= 9'd21;
+wire mark_c = mark_row && (bspr_late_f || mark_test) && hcnt >= 9'd24 && hcnt <= 9'd31;
+wire mark_w = mark_test && (vcnt == {1'b0, irq2_line});
+wire mark = mark_r | mark_y | mark_c | mark_w;
 assign r = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? (mark_c ? 8'h00 : 8'hFF) : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_r, pal_r) : pal_r;
 assign g = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? (mark_r ? 8'h00 : 8'hFF) : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_g, pal_g) : pal_g;
-assign b = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? (mark_c ? 8'hFF : 8'h00) : xh1 ? 8'hFF : xh2 ? 8'h00 : shif_box ? blend58(shif_b, pal_b) : pal_b;
+assign b = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? ((mark_c | mark_w) ? 8'hFF : 8'h00) : xh1 ? 8'hFF : xh2 ? 8'h00 : shif_box ? blend58(shif_b, pal_b) : pal_b;
 
 // ---------------------------------------------------------------- tie-offs
 assign p7_req = 1'b0; assign p7_addr = '0;

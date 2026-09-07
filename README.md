@@ -89,7 +89,9 @@ drawing by vblank: cut short and shown (the hardware model), or finished
 and shown a frame late. Timing markers draws small blocks along the top
 left edge on the frame after an event: red when the Y render overran,
 yellow when the rotation scan-out missed a line, cyan when the 16B line
-builder did. In simulation the scan-outs never miss a line on any of the
+builder did. Test lights all three and draws a white line on the IRQ2
+scanline, which proves the settings reach the core and shows where the
+IRQ2 switch put the line. In simulation the scan-outs never miss a line on any of the
 five attract modes and Power Drift's demo race renders in at most 100 of
 the 259 lines available, so a block on a cabinet points at the DDR3 or
 SDRAM side rather than the logic.
