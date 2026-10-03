@@ -86,7 +86,7 @@ Sub X:
 | 0C0000-0CFFFF | shared RAM |
 | 180000-18FFFF | Y sprite RAM, 64 KB (4096 entries of 8 words, plus indirection tables in the same space) |
 | 1F8000-1FBFFF | local RAM 16 KB |
-| 1FC000-1FFFFF | backup RAM 16 KB (battery, NVRAM index 3 as on the X Board) |
+| 1FC000-1FFFFF | backup RAM 16 KB (battery, NVRAM index 3 as on the X Board; since M8 the file carries a 512-byte hiscore window after it) |
 
 Sub Y:
 
@@ -479,6 +479,7 @@ by the user before any rbf is committed.
 | M5 | Sound wired (PCM mask F8, latch NMI, port H mute) | PCM exact vs `segapcm.py`; attract-mode WAV envelope correlation > 0.95 as on the X Board |
 | M6 | Hardware bring-up and timing closure, NVRAM, DIPs, controls, OSD | zero negative slack in the fit corner; 30 min attract without a watchdog reset; HDMI capture matches sim |
 | M7 | Power Drift (gear shift, motor stub), G-LOC, Strike Fighter (16 MB ROM slot), Rail Chase (gun modes from Line of Fire), R360 | each boots, passes its memory test, plays; MRAs and alternatives regenerated, `db.json.zip`, release |
+| M8 | JimmyStones' pause.v and hiscore.v: dim video while paused, score restore for the games that refill their table at boot | `check_hiscore.sh`: restored table matches at frame 60, OSD open and upload read it back; confirmed on hardware |
 
 M1 findings (gforce2, 120 frames). All three CPUs track MAME's executed-PC
 trace at 99.7% or better with the X Board thresholds; the resyncs left are
@@ -702,6 +703,49 @@ the rotation buffer at the first swap after the frame, and every game's
 frame-150 and frame-300 dumps reproduce MAME's screenshot exactly, as do
 Galaxy Force II's frames 1600, 2600 and 2900 from its rotating demo,
 which the old dump had also got wrong.
+
+### M8: pause and hiscores
+
+The X Board's M21, ported. JimmyStones' Pause_MiSTer and Hiscores_MiSTer
+are vendored as `rtl/pause/pause.v` (0004, upstream b93a5e0) and
+`rtl/hiscore/hiscore.v` (0014, upstream 31789f3); the X Board's DESIGN.md
+has the long version of why the glue exists. What is different here:
+
+- The hiscore.dat lines for Power Drift, Galaxy Force II and G-LOC point
+  into sub Y's address space, and `1F0000-1FFFFF` there is sub Y's own
+  64 KB work RAM, not the battery RAM. So these scores were never saved by
+  the NVRAM path, and every boot refills the tables from ROM (MAME write
+  tap: 200, 56 and 119 word writes into the table areas in the first frames,
+  valid battery RAM or not). The core's hiscore port takes a 24-bit
+  address whose bits 23:21 pick the CPU space (0 sub Y, 1 sub X); sub Y's
+  RAM reads through its spare second port and the backup RAM through the
+  NVRAM upload port, writes borrow the CPU ports like an NVRAM download.
+- MAME's start/end bytes are right for all three games (read back from the
+  games' RAM after their own init), unlike the X Board's. The clones match
+  their parents; G-LOC R360 has a different layout and is left out. Rail
+  Chase keeps two copies of its table in the battery RAM and rewrites them
+  every frame from a working copy, so it stays on the plain NVRAM save.
+  Strike Fighter's table was not found by a letter-run search of either
+  sub CPU's RAM.
+- Power Drift's entry is 0x18F bytes, so the config lines carry two-byte
+  lengths (`CFG_LENGTHWIDTH` 2) and the score buffer is 512 bytes.
+- These games keep records and settings in the battery RAM, which the user
+  wanted to keep saving. MiSTer allows one `<nvram>` per MRA, so the file
+  is the 16 KB backup RAM followed by a 512-byte window holding the score
+  table (`<nvram index="3" size="16896"/>`). `yb_hiscore.sv` shows
+  hiscore.v its own dump index for addresses with bit 14 set inside the
+  index 3 transfer, on download and upload alike. Main zero-fills a file
+  that is shorter than the MRA says, so an old 16 KB save would arrive as a
+  blank table: the glue only lets hiscore.v count the window as loaded once
+  a nonzero byte has arrived in it. A save made by the game writing the
+  backup RAM also carries the window, which then holds the table as of the
+  last OSD open; that is the same data the file already held, so nothing
+  goes stale.
+
+Verification: `verif/board/check_hiscore.sh` boots Power Drift with a
+shifted copy of its default table streamed in as the window, confirms sub
+Y's RAM holds that copy at frame 60 after the game's own refill, then opens
+the OSD and reads the window back through the index 3 upload path.
 
 ## 5. Open questions (MAME is the default answer until hardware says otherwise)
 1. Horizontal total and pixel clock: MAME's 342 columns come from `set_size`, not a measured `set_raw`, so they carry no weight against the X Board's 400 at 6.25 MHz. Assume 400; a scope on a real board or a known refresh rate would settle it.

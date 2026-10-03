@@ -137,6 +137,8 @@ localparam CONF_STR = {
     "H1O[20:17],P2 cursor speed,50,60,70,80,90,100,10,20,30,40;",
     "H1O[21],Crosshair (gamepad),On,Off;",
     "O[10],Pause when OSD open,Off,On;",
+    "O[30],Dim video after 10s,On,Off;",
+    "H4O[31],Autosave hiscores,Off,On;",
     "-;",
     "P1,Debug;",
     "P1O[34:32],IRQ2 scanline,Descriptor (170),150,160,180,190,200,210,220;",
@@ -207,7 +209,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
 
     .ioctl_download(ioctl_download),
     .ioctl_upload(ioctl_upload),
-    .ioctl_upload_req(nv_modified),
+    .ioctl_upload_req(nv_modified | hs_upload_req),
     .ioctl_upload_index(8'd3),
     .ioctl_wr(ioctl_wr),
     .ioctl_rd(ioctl_rd),
@@ -235,9 +237,13 @@ end
 
 // NVRAM (sub X backup RAM, 16 KB) as ioctl index 3: download at load, upload
 // on request; the core asserts nv_modified when the game writes the RAM.
+// For games with a hiscore table the same file carries a 512-byte window
+// after the RAM (addresses with bit 14 set), owned by the hiscore glue.
 wire        nv_modified;
-wire        nv_download = ioctl_download && (ioctl_index[7:0] == 8'd3);
+wire [15:0] nv_dout;
+wire        nv_download = ioctl_download && (ioctl_index[7:0] == 8'd3) && !ioctl_addr[14];
 wire        nv_upload   = ioctl_upload   && (ioctl_index[7:0] == 8'd3);
+assign ioctl_din = ioctl_addr[14] ? hs_ioctl_din : nv_dout;
 
 ////////////////////////////   ROM LOADING   //////////////////////////////////
 wire        sw_req, sw_ack;
@@ -245,7 +251,8 @@ wire [24:1] sw_addr;
 wire [15:0] sw_din;
 wire  [1:0] sw_be;
 board_desc_t board_desc;
-assign status_menumask = {12'd0,
+assign status_menumask = {11'd0,
+    ~hs_configured,                // bit 4: no hiscore table in the MRA
     board_desc.ana_mode != 3'd2,   // bit 3: not a driving game, no gear indicator option
     !(board_desc.ana_mode == 3'd1 || board_desc.ana_mode == 3'd4),   // bit 2: not a flight game, no hold-position option
     board_desc.ana_mode != 3'd3,   // bit 1: not a gun game, no gun options
@@ -298,7 +305,11 @@ sdram sdram (
 // the core encodes 0 analog, 1 d-pad, 2 both
 wire [1:0] stick_mode = (status[9:8] == 2'd0) ? 2'd1 : (status[9:8] == 2'd1) ? 2'd0 : 2'd2;
 
-// Pause: the mapped button or the OSD open with the option set.
+// Pause: JimmyStones' pause module below. The mapped button (joystick bit
+// 10) toggles on each press, the OSD holds it when the option is set, and
+// the hiscore module asks for it around its RAM accesses; reset clears the
+// toggle. After 10 s paused the picture is dimmed (OSD option) against
+// burn-in.
 // Button positions follow the MRA's list, which puts the buttons players bind
 // first at the front. Four layouts, chosen from the game id:
 //   flight, two buttons (Galaxy Force II):   A, B, Speed Up, Slow Down, Start, Coin, Pause, Test, Service
@@ -319,10 +330,41 @@ function automatic [15:0] map_buttons(input [15:0] j, input [1:0] lay);
 endfunction
 wire [15:0] p1_btn = map_buttons(joystick_0[15:0], btn_layout);
 wire [15:0] p2_btn = map_buttons(joystick_1[15:0], btn_layout);
-wire pause = p1_btn[10] | (status[10] & OSD_STATUS);
+wire        pause, hs_pause;
+wire  [7:0] r, g, b;
+wire [23:0] rgb_paused;
+pause #(.RW(8), .GW(8), .BW(8), .CLKSPD(50)) pause_sys (
+    .clk_sys(clk_sys),
+    .reset(reset),
+    .user_button(p1_btn[10]),
+    .pause_request(hs_pause),
+    .options({~status[30], status[10]}),   // [1] dim after 10 s, [0] pause in OSD
+    .OSD_STATUS(OSD_STATUS),
+    .r(r), .g(g), .b(b),
+    .pause_cpu(pause),
+    .rgb_out(rgb_paused)
+);
+
+//////////////////////////////   HISCORE   ////////////////////////////////////
+// Power Drift, Galaxy Force II and G-LOC keep their score tables in sub Y's
+// own RAM, refilled from ROM at every boot: the MRA carries the hiscore.dat
+// entries as <rom index="5"> and the saved table rides in the NVRAM file
+// after the backup RAM; the module restores the table once the game has
+// initialised it and reads it back when the OSD opens.
+wire        hs_upload_req, hs_configured, hs_write, hs_rd, hs_wr;
+wire [23:0] hs_addr;
+wire  [7:0] hs_din, hs_dout;
+wire [15:0] hs_ioctl_din;
+yb_hiscore hiscore (
+    .clk(clk_sys), .reset(reset), .paused(pause), .autosave(status[31]), .OSD_STATUS(OSD_STATUS),
+    .ioctl_download(ioctl_download), .ioctl_upload(ioctl_upload), .ioctl_wr(ioctl_wr),
+    .ioctl_addr(ioctl_addr), .ioctl_index(ioctl_index[7:0]), .ioctl_dout(ioctl_dout), .ioctl_din(hs_ioctl_din),
+    .upload_req(hs_upload_req), .configured(hs_configured),
+    .ram_addr(hs_addr), .ram_din(hs_din), .ram_dout(hs_dout),
+    .ram_write(hs_write), .ram_rd(hs_rd), .ram_wr(hs_wr), .pause_req(hs_pause)
+);
 
 //////////////////////////////   CORE   ///////////////////////////////////////
-wire  [7:0] r, g, b;
 wire        ce_pix, hs, vs, hb, vb;
 wire signed [15:0] aud_l, aud_r;
 
@@ -341,7 +383,8 @@ yb_core core (
     .p6_req(p6_req), .p6_addr(p6_addr), .p6_dout(p6_dout), .p6_ack(p6_ack),
     .p7_req(p7_req), .p7_addr(p7_addr), .p7_dout(p7_dout), .p7_ack(p7_ack),
     .nv_download(nv_download), .nv_upload(nv_upload), .nv_wr(ioctl_wr), .nv_rd(ioctl_rd),
-    .nv_addr(ioctl_addr[13:1]), .nv_din(ioctl_dout), .nv_dout(ioctl_din), .nv_modified(nv_modified),
+    .nv_addr(ioctl_addr[13:1]), .nv_din(ioctl_dout), .nv_dout(nv_dout), .nv_modified(nv_modified),
+    .hs_addr(hs_addr), .hs_din(hs_din), .hs_dout(hs_dout), .hs_write(hs_write), .hs_rd(hs_rd), .hs_wr(hs_wr),
     .p1_buttons(p1_btn), .p2_buttons(p2_btn),
     .stick_x(joystick_l_analog_0[7:0]), .stick_y(joystick_l_analog_0[15:8]),
     .stick2_x(joystick_l_analog_1[7:0]), .stick2_y(joystick_l_analog_1[15:8]),
@@ -380,7 +423,7 @@ arcade_video #(.WIDTH(320), .DW(24), .GAMMA(1)) arcade_video (
     .gamma_bus(gamma_bus),
     .clk_video(clk_sys),
     .ce_pix(ce_pix),
-    .RGB_in({r, g, b}),
+    .RGB_in(rgb_paused),
     .HBlank(hb),
     .VBlank(vb),
     .HSync(hs),

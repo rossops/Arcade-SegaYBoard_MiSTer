@@ -68,6 +68,36 @@ def region_parts(loader, files, slot, fill="00", pad_to_slot=True):
     return lines
 
 
+# hiscore.v config stream (rtl/hiscore/hiscore.v, "version 1", two-byte
+# lengths): a 16-byte header of timing knobs in clk_sys (50 MHz) cycles, then
+# one 8-byte line per hiscore.dat entry (4 address, 2 length, start, end).
+# Same values as the X Board core: a short wait before the first check, a
+# check every 1.3 ms until the game's defaults are in place, and 8 paused
+# cycles around each RAM access.
+HS_HEADER = (
+    (0x00FFFFFF).to_bytes(4, "big") +   # START_WAIT
+    (0xFFFF).to_bytes(2, "big") +       # CHECK_WAIT
+    (4).to_bytes(2, "big") +            # CHECK_HOLD
+    (4).to_bytes(2, "big") +            # WRITE_HOLD
+    (1).to_bytes(2, "big") +            # WRITE_REPEATCOUNT
+    (15).to_bytes(2, "big") +           # WRITE_REPEATWAIT
+    bytes([8, 0]))                      # ACCESS_PAUSEPAD, CHANGEMASK
+HS_WINDOW = 512                         # bytes after the backup RAM in the NVRAM file
+NVRAM_SIZE = 16384                      # sub X backup RAM
+
+
+def hiscore_config(rs):
+    """The <rom index="5"> bytes for a set with a `hiscore` table."""
+    out = bytearray(HS_HEADER)
+    for addr, length, start, end in rs["hiscore"]:
+        if not 0 < length < 0x10000:
+            raise SystemExit("hiscore entry length must fit two bytes")
+        out += addr.to_bytes(4, "big") + length.to_bytes(2, "big") + bytes([start, end])
+    if sum(e[1] for e in rs["hiscore"]) > HS_WINDOW:
+        raise SystemExit("hiscore table larger than the NVRAM window")
+    return bytes(out)
+
+
 def make_mra(key, rs):
     L = []
     L.append('<misterromdescription>')
@@ -89,8 +119,21 @@ def make_mra(key, rs):
         # the last region (the 16 MB Y sprite slot) ships unpadded
         L += region_parts(loader, files, SLOT[region], "FF" if region == "pcm" else "00", idx != last)
     L.append('  </rom>')
-    # sub X backup RAM (16 KB) saved as NVRAM index 3
-    L.append('  <nvram index="3" size="16384"/>')
+    if "hiscore" in rs:
+        # hiscore table: entries for hiscore.v; the saved table rides in the
+        # NVRAM file after the backup RAM (MiSTer allows one <nvram> per MRA)
+        cfg = hiscore_config(rs)
+        L.append('  <rom index="5">')
+        L.append('    <part>')
+        L.append(f'      {hexbytes(cfg[:16])}')
+        for i in range(16, len(cfg), 8):
+            L.append(f'      {hexbytes(cfg[i:i + 8])}')
+        L.append('    </part>')
+        L.append('  </rom>')
+        L.append(f'  <nvram index="3" size="{NVRAM_SIZE + HS_WINDOW}"/>')
+    else:
+        # sub X backup RAM (16 KB) saved as NVRAM index 3
+        L.append(f'  <nvram index="3" size="{NVRAM_SIZE}"/>')
     # DIP switches: raw port values (1 = off). Defaults are MAME's.
     L.append(f'  <switches default="{rs["dip_default"]}" base="0">')
     for lo, hi, name, ids in rs["dips"]:

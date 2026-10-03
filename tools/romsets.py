@@ -22,6 +22,18 @@ bytes (see yb_pkg.sv and docs/DESIGN.md), `dip_default` (SWA, SWB as MAME's
 port values, 1 = off), `dips` [(bit_lo, bit_hi, name, ids ordered by value)]
 with SWA in bits 0-7 and SWB in bits 8-15, and `buttons` (MRA names, MiSTer
 defaults).
+
+`hiscore`, where present, lists (address, length, start, end) like a MAME
+hiscore.dat line. Bits 23:21 of the address pick the CPU space (0 sub Y,
+1 sub X), the rest is that CPU's address. Power Drift, Galaxy Force II and
+G-LOC keep their tables in sub Y's volatile RAM, refilled from ROM at every
+boot, so the core restores a saved copy (JimmyStones' hiscore.v) once the
+start/end bytes show the game's defaults are in place; the MRA's NVRAM then
+grows by a 512-byte window after the backup RAM to carry that copy. The
+values here were checked against the games' RAM in MAME (they match MAME's
+hiscore.dat). Rail Chase keeps its table in the battery RAM, which the
+NVRAM save already covers; Strike Fighter's and G-LOC R360's tables are not
+located yet.
 """
 
 SLOT = {
@@ -69,6 +81,7 @@ ROMSETS = {
             (12, 13, "Difficulty", "Hardest,Hard,Easy,Normal"),
             (14, 15, "Cabinet", "City,Upright,Deluxe,Super Deluxe"),
         ],
+        "hiscore": [(0x1FE400, 0x38, 0x00, 0x01)],
         "buttons": ("Shoot,Missile,Speed Up,Slow Down,Start,Coin,Pause,Test,Service", "A,B,R2,L2,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -161,6 +174,7 @@ ROMSETS = {
             (12, 13, "Difficulty", "Hardest,Hard,Easy,Normal"),
             (14, 15, "Cabinet", "City,Upright,Deluxe,Super Deluxe"),
         ],
+        "hiscore": [(0x1FE400, 0x38, 0x00, 0x01)],
         "buttons": ("Shoot,Missile,Speed Up,Slow Down,Start,Coin,Pause,Test,Service", "A,B,R2,L2,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -253,6 +267,7 @@ ROMSETS = {
             (12, 13, "Difficulty", "Hardest,Hard,Easy,Normal"),
             (14, 15, "Cabinet", "City,Upright,Deluxe,Super Deluxe"),
         ],
+        "hiscore": [(0x1FE400, 0x38, 0x00, 0x01)],
         "buttons": ("Shoot,Missile,Speed Up,Slow Down,Start,Coin,Pause,Test,Service", "A,B,R2,L2,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -345,6 +360,7 @@ ROMSETS = {
             (12, 13, "Difficulty", "Hardest,Hard,Easy,Normal"),
             (14, 15, "Cabinet", "City,Upright,Deluxe,Super Deluxe"),
         ],
+        "hiscore": [(0x1FE400, 0x38, 0x00, 0x01)],
         "buttons": ("Shoot,Missile,Speed Up,Slow Down,Start,Coin,Pause,Test,Service", "A,B,R2,L2,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -437,6 +453,7 @@ ROMSETS = {
             (13, 13, "Allow Continue", "No,Yes"),
             (14, 15, "Difficulty", "Hardest,Hard,Easy,Normal"),
         ],
+        "hiscore": [(0x1FFA16, 0x18F, 0x02, 0x08)],
         "buttons": ("Gas,Brake,Gear Shift,Start,Coin,Pause,Test,Service", "Y,L2,A,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -531,6 +548,7 @@ ROMSETS = {
             (13, 13, "Allow Continue", "No,Yes"),
             (14, 15, "Difficulty", "Hardest,Hard,Easy,Normal"),
         ],
+        "hiscore": [(0x1FFA16, 0x18F, 0x02, 0x08)],
         "buttons": ("Gas,Brake,Gear Shift,Start,Coin,Pause,Test,Service", "Y,L2,A,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -625,6 +643,7 @@ ROMSETS = {
             (13, 13, "Allow Continue", "No,Yes"),
             (14, 15, "Difficulty", "Hardest,Hard,Easy,Normal"),
         ],
+        "hiscore": [(0x1FFA16, 0x18F, 0x02, 0x08)],
         "buttons": ("Gas,Brake,Gear Shift,Start,Coin,Pause,Test,Service", "Y,L2,A,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -719,6 +738,7 @@ ROMSETS = {
             (13, 13, "Allow Continue", "No,Yes"),
             (14, 15, "Difficulty", "Hardest,Hard,Easy,Normal"),
         ],
+        "hiscore": [(0x1FFA16, 0x18F, 0x02, 0x08)],
         "buttons": ("Gas,Brake,Gear Shift,Start,Coin,Pause,Test,Service", "Y,L2,A,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -813,6 +833,7 @@ ROMSETS = {
             (13, 13, "Allow Continue", "No,Yes"),
             (14, 15, "Difficulty", "Hardest,Hard,Easy,Normal"),
         ],
+        "hiscore": [(0x1FFA16, 0x18F, 0x02, 0x08)],
         "buttons": ("Gas,Brake,Gear Shift,Start,Coin,Pause,Test,Service", "Y,L2,A,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -907,6 +928,7 @@ ROMSETS = {
             (13, 13, "Allow Continue", "No,Yes"),
             (14, 15, "Credits", "4 to Start 3 to Continue,1 to Start 1 to Continue,3 to Start 2 to Continue,2 to Start 1 to Continue"),
         ],
+        "hiscore": [(0x1FFA00, 0xEE, 0x02, 0x04), (0x1FFA4A, 1, 0x50, 0x50)],
         "buttons": ("Vulcan,Missile,After Burner,Speed Up,Slow Down,Start,Coin,Pause,Test,Service", "A,B,Y,R2,L2,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -1001,6 +1023,7 @@ ROMSETS = {
             (13, 13, "Allow Continue", "No,Yes"),
             (14, 15, "Credits", "4 to Start 3 to Continue,1 to Start 1 to Continue,3 to Start 2 to Continue,2 to Start 1 to Continue"),
         ],
+        "hiscore": [(0x1FFA00, 0xEE, 0x02, 0x04), (0x1FFA4A, 1, 0x50, 0x50)],
         "buttons": ("Vulcan,Missile,After Burner,Speed Up,Slow Down,Start,Coin,Pause,Test,Service", "A,B,Y,R2,L2,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [
@@ -1095,6 +1118,7 @@ ROMSETS = {
             (13, 13, "Allow Continue", "No,Yes"),
             (14, 15, "Credits", "4 to Start 3 to Continue,1 to Start 1 to Continue,3 to Start 2 to Continue,2 to Start 1 to Continue"),
         ],
+        "hiscore": [(0x1FFA00, 0xEE, 0x02, 0x04), (0x1FFA4A, 1, 0x50, 0x50)],
         "buttons": ("Vulcan,Missile,After Burner,Speed Up,Slow Down,Start,Coin,Pause,Test,Service", "A,B,Y,R2,L2,Start,R,X,L,Select"),
         "regions": {
             "main": ("w16", [

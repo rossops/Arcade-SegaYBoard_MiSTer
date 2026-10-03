@@ -15,7 +15,10 @@ def expand_mra(text, zf):
     """Minimal MRA expander for the subset gen_mra emits."""
     import re
     out = bytearray()
+    # only <rom index="0"> is the stream; a hiscore <rom index="5"> is not
     lines = text.splitlines()
+    end = next(i for i, l in enumerate(lines) if l.strip() == "</rom>")
+    lines = lines[:end]
     i = 0
     def rom(name):
         c = [n for n in zf.namelist() if n.split("/")[-1] == name]
@@ -116,3 +119,25 @@ def test_pcm_mirrors_reach_every_bank():
     assert sum(s * rep for _, s, _, rep in files) == 0x180000
     parts = gen_mra.region_parts("flat", rs["regions"]["pcm"][1], romsets.SLOT["pcm"], "FF")
     assert sum(1 for p in parts if "epr-11516.106" in p) == 4
+
+
+@pytest.mark.parametrize("key", [k for k, rs in romsets.ROMSETS.items() if "hiscore" in rs])
+def test_hiscore_config(key):
+    """hiscore.v parses the header and lines back from the byte stream with
+    two-byte lengths, the table must fit the NVRAM window, and the MRA's nvram
+    size must be the backup RAM plus that window or the host truncates the
+    file."""
+    rs = romsets.ROMSETS[key]
+    cfg = gen_mra.hiscore_config(rs)
+    assert len(cfg) == 16 + 8 * len(rs["hiscore"])
+    assert cfg[15] == 0                        # no change mask: lines start at byte 16
+    for n, (addr, length, start, end) in enumerate(rs["hiscore"]):
+        line = cfg[16 + 8 * n:24 + 8 * n]
+        assert int.from_bytes(line[0:4], "big") == addr
+        assert int.from_bytes(line[4:6], "big") == length
+        assert line[6:8] == bytes([start, end])
+        cpu, a = addr >> 21, addr & 0x1FFFFF
+        assert (cpu == 0 and a >> 16 == 0x1F) or (cpu == 1 and a >> 14 == 0x7F), "not a RAM the core serves"
+    assert sum(e[1] for e in rs["hiscore"]) <= gen_mra.HS_WINDOW
+    mra = gen_mra.make_mra(key, rs)
+    assert f'<nvram index="3" size="{gen_mra.NVRAM_SIZE + gen_mra.HS_WINDOW}"/>' in mra

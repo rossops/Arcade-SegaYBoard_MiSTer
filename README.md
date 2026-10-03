@@ -22,6 +22,7 @@ YM2151 and a 315-5218 PCM chip.
 | M5 | Sound (Z80, YM2151, 315-5218 with the Y Board banking) | done 2026-08-28, 441/553 M10K, audio envelope 0.969 vs MAME's recording, music and samples on hardware |
 | M6 | Hardware bring-up: controls, NVRAM, DIPs, timing | done 2026-08-28, 441/553 M10K, test menu and Scene Select pixel-exact vs MAME, controls and 30 minutes of attract on hardware |
 | M7 | Power Drift, G-LOC, G-LOC R360, Rail Chase, Strike Fighter | done 2026-08-29, 441/553 M10K, all five attract modes match MAME at frames 150 and 300 (Rail Chase and Strike Fighter exact); two shared-RAM arbiter fixes came out of the hardware round |
+| M8 | Pause_MiSTer and Hiscores_MiSTer: dim video while paused, score restore for Power Drift, Galaxy Force II and G-LOC | done 2026-10-03, 446/553 M10K, 74% ALMs, no negative slack; pause dimming and the Power Drift / G-LOC restore confirmed on hardware |
 | after | Power Drift's gear indicator (MAME's shifter overlay), wheel travel, "Stick re-center" option | done 2026-08-30, 442/553 M10K, confirmed on hardware (v1.1.1) |
 | open | `pdriftl` (the link board), Strike Fighter on hardware | see `docs/DESIGN.md`; the Power Drift golden-model mismatch (open question 12) was a capture bug, settled 2026-09-07 |
 
@@ -77,8 +78,18 @@ the cabinet's self-centring stick; Off holds the position the pad last
 set), Gun control for Rail Chase (lightgun or gamepad cursor, with
 per-player cursor speed and an optional crosshair), Power Drift's gear
 indicator (MAME's shifter overlay in the lower right corner), and pause
-while the OSD is open. Options that do not apply to the loaded game are
-hidden (the MRA's board descriptor drives the framework's menu mask).
+while the OSD is open. The Pause button toggles, and after ten seconds
+paused the picture dims (Dim video, on by default). High scores: Power
+Drift, Galaxy Force II and G-LOC keep their tables in sub Y's work RAM and
+refill them from ROM at every power-on, so for those the core puts a saved
+table back once the game has booted and reads it out again when you open
+the OSD. The table rides in the same save file as the battery RAM, so
+nothing the game keeps there is lost. Turn on Autosave hiscores to have
+it written by itself; otherwise Save settings in the OSD does it. Rail
+Chase keeps its scores in the battery RAM, which the core already saves;
+Strike Fighter's and G-LOC R360's tables have not been located. Options
+that do not apply to the loaded game are hidden (the MRA's board
+descriptor drives the framework's menu mask).
 
 The Debug page is for chasing timing on a cabinet, where a pixel diff
 cannot reach. IRQ2 scanline overrides the MRA's line (MAME's tuned 170)
@@ -104,6 +115,7 @@ files.qip                            file list (edit this, never the IDE)
 build.bat / clean.bat                Windows build with Quartus Prime 17.0 Lite
 sys/                                 MiSTer framework (vendored)
 rtl/                                 the board: yb_pkg, yb_core, cpu/ video/ audio/ io/ mem/ pll/
+                                     pause/ hiscore/ are JimmyStones' MiSTer modules plus glue
 tools/                               ROM table, MRA generator, stream packer, MAME capture and trace
 verif/                               golden models, cocotb unit tests, Verilator board sim
 docs/                                design notes and hardware references
@@ -145,6 +157,7 @@ sh verif/board/check_m4.sh                    # 16B/mixer gate (full frames exac
 sh verif/board/check_m5.sh                    # sound gate (PCM cocotb + audio envelope vs MAME)
 sh verif/board/check_m6.sh                    # bring-up gate (test menu, Scene Select)
 sh verif/board/check_m7.sh                    # the other five games vs MAME
+sh verif/board/check_hiscore.sh               # hiscore restore and save-back on Power Drift
 python3 tools/gen_mra.py                      # writes releases/*.mra
 python3 tools/pack_roms.py gforce2 --zip gforce2.zip --out stream.bin --hexdir verif/golden/gforce2
 ```

@@ -17,6 +17,7 @@ verilator --lint-only -DSIMULATION --top-module emu -DYB_Z80_TV80 -Isys -Irtl/vi
   rtl/audio/yb_segapcm_5218.sv rtl/audio/yb_soundsys.sv rtl/audio/jt51/*.v verif/board/tv80/*.v \
   rtl/mem/yb_fb_if.sv rtl/video/yb_palette_5242.sv rtl/video/yb_ysprite_5305.sv rtl/video/yb_rotate_5306.sv rtl/video/yb_bsprite_5196.sv \
   rtl/cpu/fx68k/fx68k.sv rtl/cpu/fx68k/fx68kAlu.sv rtl/cpu/fx68k/uaddrPla.sv rtl/yb_core.sv rtl/pll.v \
+  rtl/pause/pause.v rtl/hiscore/hiscore.v rtl/hiscore/yb_hiscore.sv \
   sys/hps_io.sv sys/arcade_video.v sys/video_freak.sv sys/scandoubler.v \
   sys/scanlines.v sys/gamma_corr.sv sys/video_cleaner.sv sys/video_mixer.sv \
   sys/hq2x.sv sys/math.sv sys/sys_top.v \

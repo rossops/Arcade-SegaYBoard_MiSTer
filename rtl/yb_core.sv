@@ -51,6 +51,18 @@ module yb_core (
     output reg [15:0] nv_dout,
     output reg        nv_modified,
 
+    // hiscore port (JimmyStones' hiscore.v): byte wide, used only while the
+    // CPUs are paused. Bits 23:21 of the address pick the CPU space (0 sub Y,
+    // 1 sub X), the rest is that CPU's own address. Sub Y's work RAM reads
+    // through its spare second port, the backup RAM through the NVRAM
+    // upload port; writes borrow the CPU ports like an NVRAM download.
+    input      [23:0] hs_addr,
+    input       [7:0] hs_din,
+    output      [7:0] hs_dout,        // one clock after hs_addr
+    input             hs_write,       // write strobe (with hs_wr)
+    input             hs_rd,          // hiscore holds the read ports
+    input             hs_wr,          // hiscore holds the write ports
+
     // inputs (active high)
     input      [15:0] p1_buttons,   // 0 right 1 left 2 down 3 up 4 A 5 B 6 start 7 coin 8 test 9 service 10 pause 11 gas/speed up 12 brake/slow down 13 C (After Burner, Gear Shift)
     input      [15:0] p2_buttons,   // second controller, same layout (Rail Chase)
@@ -488,12 +500,16 @@ yb_dpram #(.AW(15)) yspriteram (.clk(clk_sys), .a_addr(xa[15:1]), .a_din(x_dout)
 // backup RAM (16 KB, battery backed): the host borrows the CPU port for the
 // NVRAM download and reads port B for the upload
 wire        bk_we = x_valid && x_wr && x_sel_bkup && x_start;
-wire [12:0] bk_a  = nv_download ? nv_addr : xa[13:1];
-wire [15:0] bk_d  = nv_download ? nv_din : x_dout;
-wire  [1:0] bk_be = nv_download ? 2'b11 : x_be;
+// hiscore: sub X space (address bits 23:21 = 1), 1FC000-1FFFFF; an even
+// address is the word's upper byte (UDS)
+wire        hs_x_bk = (hs_addr[23:21] == 3'd1) && (hs_addr[20:14] == 7'h7F);
+wire [12:0] bk_a  = nv_download ? nv_addr : hs_wr ? hs_addr[13:1] : xa[13:1];
+wire [15:0] bk_d  = nv_download ? nv_din : hs_wr ? {hs_din, hs_din} : x_dout;
+wire  [1:0] bk_be = nv_download ? 2'b11 : hs_wr ? {~hs_addr[0], hs_addr[0]} : x_be;
+wire        bk_we_a = nv_download ? nv_wr : hs_wr ? (hs_write && hs_x_bk) : bk_we;
 yb_dpram #(.AW(13)) backup (.clk(clk_sys), .a_addr(bk_a), .a_din(bk_d), .a_be(bk_be),
-    .a_we(nv_download ? nv_wr : bk_we), .a_dout(bkup_q),
-    .b_clk(clk_sys), .b_addr(nv_addr), .b_dout(bkup_hq));
+    .a_we(bk_we_a), .a_dout(bkup_q),
+    .b_clk(clk_sys), .b_addr(hs_rd ? hs_addr[13:1] : nv_addr), .b_dout(bkup_hq));
 always @(posedge clk_sys) nv_dout <= bkup_hq;
 // modified flag: set on a CPU write, cleared when an upload starts; held off
 // for ~2 s after each request so the host is not flooded with saves
@@ -561,10 +577,23 @@ assign p3_req    = y_rom_req;
 assign p3_addr   = SDR_SUBY_BASE[24:3] + {6'd0, y_rom_addr};
 assign p3_urgent = 1'b0;
 
-wire [15:0] y_lram_q, rot_q, bspr_q, pal_q;
-yb_dpram #(.AW(15)) suby_ram (.clk(clk_sys), .a_addr(ya[15:1]), .a_din(y_dout), .a_be(y_be),
-    .a_we(y_valid && y_wr && y_sel_lram && y_start), .a_dout(y_lram_q),
-    .b_clk(clk_sys), .b_addr(15'd0), .b_dout());
+wire [15:0] y_lram_q, rot_q, bspr_q, pal_q, y_lram_hq;
+// hiscore: sub Y space (address bits 23:21 = 0), 1F0000-1FFFFF is this RAM;
+// the score tables of Power Drift, Galaxy Force II and G-LOC live here
+wire        hs_y_ram = (hs_addr[23:21] == 3'd0) && (hs_addr[20:16] == 5'h1F);
+wire [14:0] y_lram_a  = hs_wr ? hs_addr[15:1] : ya[15:1];
+wire [15:0] y_lram_d  = hs_wr ? {hs_din, hs_din} : y_dout;
+wire  [1:0] y_lram_be = hs_wr ? {~hs_addr[0], hs_addr[0]} : y_be;
+wire        y_lram_we = hs_wr ? (hs_write && hs_y_ram) : (y_valid && y_wr && y_sel_lram && y_start);
+yb_dpram #(.AW(15)) suby_ram (.clk(clk_sys), .a_addr(y_lram_a), .a_din(y_lram_d), .a_be(y_lram_be),
+    .a_we(y_lram_we), .a_dout(y_lram_q),
+    .b_clk(clk_sys), .b_addr(hs_addr[15:1]), .b_dout(y_lram_hq));
+// hiscore read: the byte of the word the chosen RAM's port B returned for
+// last clock's address
+reg hs_x_d, hs_lo_d;
+always @(posedge clk_sys) begin hs_x_d <= hs_addr[23:21] == 3'd1; hs_lo_d <= hs_addr[0]; end
+wire [15:0] hs_word = hs_x_d ? bkup_hq : y_lram_hq;
+assign hs_dout = hs_lo_d ? hs_word[7:0] : hs_word[15:8];
 // rotation RAM: two 2 KB banks. The CPU writes one while the 315-5306 scans
 // the other; a read of 198000 swaps them (MAME rotate_control_r exchanges
 // the RAM with its buffer) and returns FFFF.
