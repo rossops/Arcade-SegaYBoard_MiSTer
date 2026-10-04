@@ -282,6 +282,8 @@ always @(posedge clk_sys) begin
     if (trace_vid && core.x_start && core.x_wr && core.x_sel_yspr) begin
         if (ys_first < 0) ys_first = core.vcnt; ys_last = core.vcnt; ys_n = ys_n + 1;
         if (ys_n < 4 || core.vcnt == 9'd223) $display("YSPRW f=%0d line=%0d a=%05x d=%04x", frame, core.vcnt, {core.xa[15:1], 1'b0}, core.x_dout);
+        // the list head (entry 0 word 7) on any line: one landing after the render start is the jitter suspect
+        if ({core.xa[15:1], 1'b0} == 16'h000E) $display("HEADW f=%0d line=%0d d=%04x", frame, core.vcnt, core.x_dout);
     end
     if (trace_vid && vb && !vb_tv_d) begin
         $display("YSPR-WRITES f=%0d n=%0d first_line=%0d last_line=%0d", frame, ys_n, ys_first, ys_last);
