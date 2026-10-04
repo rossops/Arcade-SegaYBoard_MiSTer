@@ -85,7 +85,7 @@ convention below, and its git history shows what each decision cost.
   `output_files/` with `find -newermt <start>` rather than trusting timestamps
   of old files. Read the M10K block row in `fit.rpt`, not the bit count; the
   X Board sat at 488/553.
-- Upload with `tools/mister_ssh.sh put|run` (DE10-Nano at 192.168.1.63, root;
+- Upload with `tools/mister_ssh.sh put|run` (DE10-Nano at 192.168.68.246, root;
   password known to the user). MiSTer opens clone zips literally, so ship split
   clone zips (`tools/make_clone_zips.py`), not merged ones.
 - The user tests every build on hardware before its `.rbf` is committed.

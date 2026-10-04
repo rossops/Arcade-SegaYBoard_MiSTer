@@ -3,8 +3,8 @@
 # password supplied through expect (the stock MiSTer image has no key auth).
 #   MISTER_PW=... tools/mister_ssh.sh run  "<remote command>"
 #   MISTER_PW=... tools/mister_ssh.sh put  <local file> <remote path>
-# MISTER_HOST defaults to 192.168.1.63, MISTER_PW to "1".
-HOST=${MISTER_HOST:-192.168.1.63}; PW=${MISTER_PW:-1}
+# MISTER_HOST defaults to 192.168.68.246, MISTER_PW to "1".
+HOST=${MISTER_HOST:-192.168.68.246}; PW=${MISTER_PW:-1}
 mode=$1; shift
 case "$mode" in
   run) set -- ssh -o StrictHostKeyChecking=no "root@$HOST" "$1" ;;
