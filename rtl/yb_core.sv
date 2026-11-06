@@ -72,7 +72,10 @@ module yb_core (
     input       [1:0] stick_mode,           // 0 analog, 1 d-pad, 2 both
     input       [1:0] ana_curve,            // OSD analog response: 0 linear, 1 soft, 2 softer
     input       [1:0] ana_range,            // OSD analog range: 0 100%, 1 75%, 2 50%
-    input             gun_mode,             // Rail Chase: 0 lightgun (absolute stick), 1 gamepad cursor
+    input             gun_mode,             // Rail Chase: 0 absolute position, 1 gamepad cursor
+    input             mouse_mode,           // Rail Chase: display mouse-mode crosshair and diagnostics
+    input             mouse_seen,           // Mouse movement packet received since reset
+    input             mouse_trigger,        // Current left mouse button state
     input       [3:0] speed1, speed2,       // cursor speeds (OSD values 0..9)
     input             xhair_en,             // draw crosshairs in gamepad mode
     input             stick_hold,           // flight games (modes 1 and 4): the pad moves a held position instead of a spring-return stick
@@ -873,7 +876,7 @@ endfunction
 
 // crosshair overlay for the gamepad gun mode (P1 white, P2 yellow): the
 // 0..255 positions map to the 320x224 screen as MAME's crosshairs do
-wire        xh_on = xhair_en && gun_mode && (am == 3'd3);
+wire        xh_on = xhair_en && (gun_mode || mouse_mode) && (am == 3'd3);
 wire [11:0] xh1_xm = {4'b0000, gun1_x} * 12'd5, xh1_ym = {4'b0000, gun1_y} * 12'd7;
 wire [11:0] xh2_xm = {4'b0000, gun2_x} * 12'd5, xh2_ym = {4'b0000, gun2_y} * 12'd7;
 wire  [9:0] xh1_x = xh1_xm[11:2], xh1_y = {1'b0, xh1_ym[11:3]};   // *1.25 -> 0..318, *0.875 -> 0..223
@@ -915,6 +918,8 @@ wire mark_y = mark_row && (rot_late_f  || mark_test) && hcnt >= 9'd14 && hcnt <=
 wire mark_c = mark_row && (bspr_late_f || mark_test) && hcnt >= 9'd24 && hcnt <= 9'd31;
 wire mark_w = mark_test && (vcnt == {1'b0, irq2_line});
 wire mark = mark_r | mark_y | mark_c | mark_w;
+// Final build: preserve the crosshairs and existing optional timing markers,
+// but remove the temporary mouse-mode / packet / trigger diagnostic squares.
 assign r = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? (mark_c ? 8'h00 : 8'hFF) : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_r, pal_r) : pal_r;
 assign g = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? (mark_r ? 8'h00 : 8'hFF) : (xh1 | xh2) ? 8'hFF : shif_box ? blend58(shif_g, pal_g) : pal_g;
 assign b = (ohblank | vblank | !display_enable) ? 8'd0 : mark ? ((mark_c | mark_w) ? 8'hFF : 8'h00) : xh1 ? 8'hFF : xh2 ? 8'h00 : shif_box ? blend58(shif_b, pal_b) : pal_b;

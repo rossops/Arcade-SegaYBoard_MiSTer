@@ -132,10 +132,10 @@ localparam CONF_STR = {
     "H0O[26:25],Analog range,100%,75%,50%;",
     "H2O[27],Stick re-center,On,Off;",
     "H3O[28],Gear indicator,On,Off;",
-    "H1O[12],Gun control,Lightgun,Gamepad;",
-    "H1O[16:13],P1 cursor speed,50,60,70,80,90,100,10,20,30,40;",
-    "H1O[20:17],P2 cursor speed,50,60,70,80,90,100,10,20,30,40;",
-    "H1O[21],Crosshair (gamepad),On,Off;",
+    "H1O[13:12],Gun control,Lightgun,Gamepad,Mouse;",
+    "H1O[17:14],P1 cursor speed,50,60,70,80,90,100,10,20,30,40;",
+    "H1O[21:18],P2 cursor speed,50,60,70,80,90,100,10,20,30,40;",
+    "H1O[22],Crosshair (gamepad),On,Off;",
     "O[10],Pause when OSD open,Off,On;",
     "O[30],Dim video after 10s,On,Off;",
     "H4O[31],Autosave hiscores,Off,On;",
@@ -179,6 +179,7 @@ wire [15:0] ioctl_dout, ioctl_din;
 wire [31:0] joystick_0, joystick_1;
 wire [15:0] joystick_l_analog_0, joystick_l_analog_1;
 wire [15:0] joystick_r_analog_0;
+wire [24:0] ps2_mouse;
 
 wire video_reset = RESET | status[0] | buttons[1] | ~pll_locked;
 wire reset = video_reset | ioctl_download | ~rom_loaded | ~sdram_ready_sys;
@@ -219,6 +220,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .ioctl_index(ioctl_index),
     .ioctl_wait(ioctl_wait),
 
+    .ps2_mouse(ps2_mouse),
     .joystick_0(joystick_0),
     .joystick_1(joystick_1),
     .joystick_l_analog_0(joystick_l_analog_0),
@@ -328,7 +330,44 @@ function automatic [15:0] map_buttons(input [15:0] j, input [1:0] lay);
     default: map_buttons = {5'd0, j[7], j[9], j[8], j[6], j[5], 1'b0, j[4], j[3:0]};
     endcase
 endfunction
-wire [15:0] p1_btn = map_buttons(joystick_0[15:0], btn_layout);
+// Rail Chase: third Gun control choice uses MiSTer's PS/2 mouse reports.
+// Relative X/Y accumulation follows the T2 mouse-input approach.
+// Menu encoding: 0=Lightgun, 1=Gamepad, 2=Mouse; 3 is treated as Lightgun.
+wire rc_mouse = (board_desc.ana_mode == 3'd3) && (status[13:12] == 2'd2);
+wire rc_gamepad = (status[13:12] == 2'd1);
+reg mouse_toggle_d = 1'b0;
+reg [7:0] mouse_x = 8'd128, mouse_y = 8'd128;
+reg mouse_left = 1'b0;
+reg mouse_seen = 1'b0;
+function automatic [7:0] mouse_clamp(input [7:0] pos, input signed [9:0] delta);
+    reg signed [10:0] sum;
+    begin
+        sum = $signed({3'b000, pos}) + $signed(delta);
+        if (sum < 0) mouse_clamp = 8'd0;
+        else if (sum > 255) mouse_clamp = 8'd255;
+        else mouse_clamp = sum[7:0];
+    end
+endfunction
+always @(posedge clk_sys) begin
+    if (reset) begin
+        mouse_toggle_d <= ps2_mouse[24];
+        mouse_x <= 8'd128;
+        mouse_y <= 8'd128;
+        mouse_left <= 1'b0;
+        mouse_seen <= 1'b0;
+    end else begin
+        // Mouse button state must be sampled even when the pointer is stationary.
+        mouse_left <= ps2_mouse[0];
+        if (mouse_toggle_d != ps2_mouse[24]) begin
+        mouse_toggle_d <= ps2_mouse[24];
+        mouse_seen <= 1'b1;
+        mouse_x <= mouse_clamp(mouse_x, $signed({ps2_mouse[4], ps2_mouse[4], ps2_mouse[15:8]}));
+        mouse_y <= mouse_clamp(mouse_y, -$signed({ps2_mouse[5], ps2_mouse[5], ps2_mouse[23:16]}));
+        end
+    end
+end
+wire [15:0] p1_btn_base = map_buttons(joystick_0[15:0], btn_layout);
+wire [15:0] p1_btn = p1_btn_base | (rc_mouse ? {11'd0, mouse_left, 4'd0} : 16'd0);
 wire [15:0] p2_btn = map_buttons(joystick_1[15:0], btn_layout);
 wire        pause, hs_pause;
 wire  [7:0] r, g, b;
@@ -386,11 +425,12 @@ yb_core core (
     .nv_addr(ioctl_addr[13:1]), .nv_din(ioctl_dout), .nv_dout(nv_dout), .nv_modified(nv_modified),
     .hs_addr(hs_addr), .hs_din(hs_din), .hs_dout(hs_dout), .hs_write(hs_write), .hs_rd(hs_rd), .hs_wr(hs_wr),
     .p1_buttons(p1_btn), .p2_buttons(p2_btn),
-    .stick_x(joystick_l_analog_0[7:0]), .stick_y(joystick_l_analog_0[15:8]),
+    .stick_x(rc_mouse ? (mouse_x ^ 8'h80) : joystick_l_analog_0[7:0]),
+    .stick_y(rc_mouse ? (mouse_y ^ 8'h80) : joystick_l_analog_0[15:8]),
     .stick2_x(joystick_l_analog_1[7:0]), .stick2_y(joystick_l_analog_1[15:8]),
     .throttle(joystick_r_analog_0[15:8] ^ 8'h80), .stick_mode(stick_mode),
     .ana_curve(status[24:23]), .ana_range(status[26:25]),
-    .gun_mode(status[12]), .speed1(status[16:13]), .speed2(status[20:17]), .xhair_en(~status[21]), .stick_hold(status[27]), .shifter_en(~status[28]),
+    .gun_mode(rc_gamepad), .mouse_mode(rc_mouse), .mouse_seen(mouse_seen), .mouse_trigger(mouse_left), .speed1(status[17:14]), .speed2(status[21:18]), .xhair_en(~status[22]), .stick_hold(status[27]), .shifter_en(~status[28]),
     .dbg_irq2(status[34:32]), .dbg_finish(status[35]), .dbg_marker(status[37:36]),
     .dsw_a(dsw_a), .dsw_b(dsw_b),
     .service(p1_btn[9]), .test(status[7] | p1_btn[8]),
